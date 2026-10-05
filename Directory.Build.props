@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <!-- Root of the game install the mod compiles against and installs into. -->
+    <GameDir Condition="'$(GameDir)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..'))</GameDir>
+    <ManagedDir>$(GameDir)\Air Defender_Data\Managed</ManagedDir>
+    <BepInExCore>$(GameDir)\BepInEx\core</BepInExCore>
+  </PropertyGroup>
+</Project>

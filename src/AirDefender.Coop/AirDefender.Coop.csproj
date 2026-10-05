@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>AirDefender.Coop</AssemblyName>
+    <RootNamespace>AirDefenderCoop</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>disable</Nullable>
+    <Version>0.1.0</Version>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS0649;CS0169;CS0414</NoWarn>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="$(BepInExCore)\BepInEx.dll" Private="false" />
+    <Reference Include="$(BepInExCore)\0Harmony.dll" Private="false" />
+    <!-- Publicized copy produced by tools/Publicizer (scripts/build.ps1); compile-time only. -->
+    <Reference Include="$(MSBuildThisFileDirectory)..\..\lib\AirDefender.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\AirDefender.Utils.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\com.rlabrecque.steamworks.net.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\UnityEngine.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\UnityEngine.IMGUIModule.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\UnityEngine.InputLegacyModule.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\UnityEngine.TextRenderingModule.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\UnityEngine.JSONSerializeModule.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\UnityEngine.AudioModule.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\Unity.InputSystem.dll" Private="false" />
+  </ItemGroup>
+</Project>
