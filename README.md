@@ -5,9 +5,9 @@ An unofficial **two-player co-op mod for [Air Defender](https://store.steampower
 hosts; a Steam friend joins with a normal Steam invite, and both work the **same live air picture**:
 identifying tracks, scrambling QRA, tasking fighters, tankers and AWACS, and running the battle together.
 
-> **Status: v0.1.0, early test build.** Tested on Windows with two game instances on one PC over a
-> loopback connection. **The Steam invite and peer-to-peer path is implemented but not yet tested
-> between two PCs.** Expect rough edges. See [Known limitations](#known-limitations).
+> **Status: v0.1.0, early test build.** Two PCs have connected over Steam peer-to-peer. The detailed
+> sync measurements below come from two game instances on one PC over a loopback connection.
+> Expect rough edges. See [Known limitations](#known-limitations).
 
 Not affiliated with or endorsed by ROTOR3 / the developers of Air Defender. You need your own copy of the
 game. This repository contains **no game files**.
@@ -109,7 +109,8 @@ decisions are switched off and its world mirrors the host's.
 
 ## Known limitations
 
-- **Steam P2P is untested between two PCs.** Only the loopback path has been verified.
+- **Limited internet testing.** Steam P2P between two PCs works, but long sessions over the internet
+  have not been measured yet.
 - **UK campaign only so far.** The Falklands theatre is untested, and training missions are blocked
   in co-op.
 - **Not yet replicated:**
