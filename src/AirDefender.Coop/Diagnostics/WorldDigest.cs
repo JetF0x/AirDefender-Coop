@@ -40,7 +40,7 @@ namespace AirDefenderCoop.Diagnostics
             float window = _lastStatsTime > 0 ? now - _lastStatsTime : Interval;
             CoopLog.Info($"[STATS] contacts={EntityReplicator.HostTracked} spawnsSent={EntityReplicator.SpawnsSent} fieldsSent={StateReplicator.FieldsSent} " +
                          $"stateCost={StateReplicator.HostMsPerSecond:0.0}ms/s up={(CoopSession.BytesSent - _lastBytes) / 1024f / window:0.0}KB/s " +
-                         $"rtt={CoopSession.RttMs:0}ms cmds={Commands.CommandRouter.Executed}/{Commands.CommandRouter.Failed} asma={PresentationSync.AsmaForwarded} voice={PresentationSync.VoiceForwarded} hits={RadarHitSync.Forwarded}");
+                         $"players={CoopSession.Players.Count} inWorld={Bootstrap.WorldSync.ReadyPeerCount} rttMax={CoopSession.RttMs:0}ms cmds={Commands.CommandRouter.Executed}/{Commands.CommandRouter.Failed} asma={PresentationSync.AsmaForwarded} voice={PresentationSync.VoiceForwarded} hits={RadarHitSync.Forwarded}");
             _lastBytes = CoopSession.BytesSent;
             _lastStatsTime = now;
             _next = now + Interval;

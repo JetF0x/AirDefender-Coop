@@ -233,7 +233,7 @@ namespace AirDefenderCoop.Commands
 
             if (err != null)
             {
-                CoopLog.Warn($"Partner call {route.Name} rejected: {err}");
+                CoopLog.Warn($"{CoopSession.SenderName}'s call {route.Name} rejected: {err}");
                 if (route.Blocking) Reply(req, false, err, null);
                 return;
             }
@@ -243,7 +243,7 @@ namespace AirDefenderCoop.Commands
             {
                 CommandRouter.EnterRemote();
                 ret = route.Method.Invoke(inst, args);
-                CoopLog.Info($"Executed partner call {route.Name}");
+                CoopLog.Info($"Executed {CoopSession.SenderName}'s call {route.Name}");
             }
             catch (TargetInvocationException tie)
             {
@@ -274,7 +274,8 @@ namespace AirDefenderCoop.Commands
         private static void Reply(int req, bool ok, string err, Action<NetWriter> body)
         {
             if (req == 0) return;
-            CoopSession.Send(MsgType.CommandResult, w =>
+            // Only the player who made the call is waiting for this.
+            CoopSession.Reply(MsgType.CommandResult, w =>
             {
                 w.I32(req);
                 w.Bool(ok);

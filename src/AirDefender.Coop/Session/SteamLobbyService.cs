@@ -6,10 +6,11 @@ using Steamworks;
 namespace AirDefenderCoop
 {
     /// <summary>
-    /// Steam invites: the host makes a friends-only lobby with two slots and opens the overlay
-    /// invite dialog. Accepting an invite either fires GameLobbyJoinRequested_t (game running) or
+    /// Steam invites: the host makes a friends-only lobby sized to CoopSession.MaxPlayers and opens
+    /// the overlay invite dialog. Accepting an invite either fires GameLobbyJoinRequested_t (game running) or
     /// starts the game with "+connect_lobby &lt;id&gt;" (handled through CoopConfig). The joiner
-    /// enters the lobby, then opens a P2P link to the lobby owner.
+    /// enters the lobby, then opens a P2P link to the lobby owner. Steam refuses joins once the
+    /// lobby is full.
     /// </summary>
     public static class SteamLobbyService
     {
@@ -38,6 +39,7 @@ namespace AirDefenderCoop
             _lobbyEnter = Callback<LobbyEnter_t>.Create(OnLobbyEnter);
             _chatUpdate = Callback<LobbyChatUpdate_t>.Create(OnChatUpdate);
             _created = CallResult<LobbyCreated_t>.Create(OnLobbyCreated);
+            CoopSession.Stopped += reason => { if (reason != CoopSession.RestartReason) Leave(); };
             CoopLog.Info("Steam lobby service ready");
         }
 
@@ -68,10 +70,10 @@ namespace AirDefenderCoop
             if (!Available) { Status = "Steam is not available"; return; }
             Init();
             Leave();
-            _hostTransport = new SteamTransport(CSteamID.Nil, IsLobbyMember);
+            _hostTransport = SteamTransport.ForHost(IsLobbyMember);
             CoopSession.StartHost(_hostTransport);
             Status = "Creating Steam lobby...";
-            var call = SteamMatchmaking.CreateLobby(ELobbyType.k_ELobbyTypeFriendsOnly, 2);
+            var call = SteamMatchmaking.CreateLobby(ELobbyType.k_ELobbyTypeFriendsOnly, CoopSession.MaxPlayers);
             _created.Set(call);
         }
 
@@ -93,7 +95,7 @@ namespace AirDefenderCoop
                 SteamFriends.SetRichPresence("connect", "+connect_lobby " + Lobby.m_SteamID);
             }
             catch { }
-            Status = "Lobby ready - invite a friend";
+            Status = $"Lobby ready ({CoopSession.MaxPlayers} players) - invite friends";
             Ui.CoopPanel.Open();
             CoopLog.Info($"Steam lobby created: {Lobby.m_SteamID}");
         }
@@ -151,6 +153,8 @@ namespace AirDefenderCoop
             return ok;
         }
 
+        public static bool IsInLobby(CSteamID id) => IsLobbyMember(id);
+
         private static bool IsLobbyMember(CSteamID id)
         {
             if (!Lobby.IsValid()) return false;
@@ -166,10 +170,15 @@ namespace AirDefenderCoop
             var who = new CSteamID(u.m_ulSteamIDUserChanged);
             var change = (EChatMemberStateChange)u.m_rgfChatMemberStateChange;
             CoopLog.Info($"Lobby member {who.m_SteamID} change {change}");
-            if (CoopSession.IsHost && _hostTransport != null && (change & EChatMemberStateChange.k_EChatMemberStateChangeEntered) != 0)
-            {
-                if (who != SteamUser.GetSteamID()) _hostTransport.SetPeer(who);
-            }
+            if (!CoopSession.IsHost || _hostTransport == null || who == SteamUser.GetSteamID()) return;
+            if ((change & EChatMemberStateChange.k_EChatMemberStateChangeEntered) != 0)
+                _hostTransport.Allow(who);
+            const EChatMemberStateChange gone = EChatMemberStateChange.k_EChatMemberStateChangeLeft
+                | EChatMemberStateChange.k_EChatMemberStateChangeDisconnected
+                | EChatMemberStateChange.k_EChatMemberStateChangeKicked
+                | EChatMemberStateChange.k_EChatMemberStateChangeBanned;
+            if ((change & gone) != 0)
+                CoopSession.HostDropPeer(who.m_SteamID, "left the Steam lobby");
         }
 
         // ---------------------------------------------------------------- join
@@ -212,7 +221,7 @@ namespace AirDefenderCoop
             CSteamID owner = SteamMatchmaking.GetLobbyOwner(lobby);
             Status = "Connecting to host...";
             CoopLog.Info($"Entered lobby {lobby.m_SteamID}, host {owner.m_SteamID}");
-            CoopSession.StartClient(new SteamTransport(owner, null));
+            CoopSession.StartClient(SteamTransport.ForClient(owner));
         }
 
         public static void Leave()

@@ -69,7 +69,7 @@ namespace AirDefenderCoop.Patches
             if (!res.Success)
             {
                 CoopLog.Info($"Partner identification of {contactId} as {ident} refused: {res.Message}");
-                AsmaService.PostSitrep("IDENT FAILED", $"{CoopSession.PartnerName}: {res.Message}", AsmaMessageSeverity.Advisory);
+                AsmaService.PostSitrep("IDENT FAILED", $"{CoopSession.SenderName}: {res.Message}", AsmaMessageSeverity.Advisory);
                 return;
             }
             try { ForcePendingTag.ClearPendingRequirement(contactId); } catch { }
