@@ -3,7 +3,7 @@ namespace AirDefenderCoop.Net
     /// <summary>Wire protocol version. Bump whenever any message layout changes.</summary>
     public static class Protocol
     {
-        public const int Version = 1;
+        public const int Version = 2;
     }
 
     public enum MsgType : ushort
@@ -15,6 +15,7 @@ namespace AirDefenderCoop.Net
         Ping = 4,
         Pong = 5,
         Bye = 6,
+        PlayerList = 7,
 
         // World bootstrap
         WorldBegin = 20,

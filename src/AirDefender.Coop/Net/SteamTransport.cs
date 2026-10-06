@@ -6,9 +6,9 @@ using Steamworks;
 namespace AirDefenderCoop.Net
 {
     /// <summary>
-    /// Peer-to-peer link over ISteamNetworkingMessages, routed through Steam Datagram Relay
-    /// (no port forwarding needed). The host accepts a session only from the partner it expects
-    /// (the lobby member); the client sends to the lobby owner.
+    /// Peer-to-peer links over ISteamNetworkingMessages, routed through Steam Datagram Relay
+    /// (no port forwarding needed). The host accepts sessions from lobby members (one session per
+    /// client); a client talks only to the lobby owner.
     /// </summary>
     public sealed class SteamTransport : ITransport
     {
@@ -16,15 +16,19 @@ namespace AirDefenderCoop.Net
 
         private readonly IntPtr[] _recv = new IntPtr[64];
         private readonly Func<CSteamID, bool> _acceptFilter;
+        private readonly bool _isHost;
+        private readonly HashSet<ulong> _accepted = new HashSet<ulong>();
+        private readonly List<KeyValuePair<ulong, string>> _failed = new List<KeyValuePair<ulong, string>>();
         private Callback<SteamNetworkingMessagesSessionRequest_t> _onRequest;
         private Callback<SteamNetworkingMessagesSessionFailed_t> _onFailed;
-        private CSteamID _peer;
+        private CSteamID _server;
         private string _failure;
         private bool _closed;
 
-        public SteamTransport(CSteamID peer, Func<CSteamID, bool> acceptFilter)
+        private SteamTransport(bool isHost, CSteamID server, Func<CSteamID, bool> acceptFilter)
         {
-            _peer = peer;
+            _isHost = isHost;
+            _server = server;
             _acceptFilter = acceptFilter;
             _onRequest = Callback<SteamNetworkingMessagesSessionRequest_t>.Create(OnSessionRequest);
             _onFailed = Callback<SteamNetworkingMessagesSessionFailed_t>.Create(OnSessionFailed);
@@ -34,6 +38,12 @@ namespace AirDefenderCoop.Net
             SetGlobalInt(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMax, 2 * 1024 * 1024);
             SetGlobalInt(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendBufferSize, 4 * 1024 * 1024);
         }
+
+        /// <summary>Host: accepts any user the filter allows (the lobby members).</summary>
+        public static SteamTransport ForHost(Func<CSteamID, bool> acceptFilter) => new SteamTransport(true, CSteamID.Nil, acceptFilter);
+
+        /// <summary>Client: talks to the host only.</summary>
+        public static SteamTransport ForClient(CSteamID host) => new SteamTransport(false, host, null);
 
         private static void SetGlobalInt(ESteamNetworkingConfigValue key, int value)
         {
@@ -47,42 +57,54 @@ namespace AirDefenderCoop.Net
             finally { h.Free(); }
         }
 
-        public string Describe => _peer.IsValid() ? $"Steam P2P {_peer.m_SteamID}" : "Steam P2P (waiting for partner)";
-        public bool HasPeer => _peer.IsValid() && _failure == null;
+        public string Describe => _isHost ? $"Steam P2P host ({_accepted.Count} linked)" : $"Steam P2P {_server.m_SteamID}";
+        public bool HasPeer => !_isHost && _server.IsValid() && _failure == null;
+        public ulong ServerPeer => _server.m_SteamID;
         public string FailureReason => _failure;
-        public CSteamID Peer => _peer;
 
-        /// <summary>The host learns its partner's id from the lobby; set it so sends can start.</summary>
-        public void SetPeer(CSteamID peer)
+        /// <summary>
+        /// Host: a user just entered the lobby. Accepts a session request that may already be
+        /// pending from them (it can arrive before the lobby member list shows them).
+        /// </summary>
+        public void Allow(CSteamID id)
         {
-            _peer = peer;
-            _failure = null;
+            if (!_isHost || _closed) return;
+            _accepted.Add(id.m_SteamID);
+            var ident = new SteamNetworkingIdentity();
+            ident.SetSteamID(id);
+            try { SteamNetworkingMessages.AcceptSessionWithUser(ref ident); } catch { }
         }
 
         private void OnSessionRequest(SteamNetworkingMessagesSessionRequest_t req)
         {
             var remote = req.m_identityRemote;
             CSteamID id = remote.GetSteamID();
-            bool ok = (_peer.IsValid() && id == _peer) || (_acceptFilter != null && _acceptFilter(id));
+            bool ok = _isHost
+                ? _accepted.Contains(id.m_SteamID) || (_acceptFilter != null && _acceptFilter(id))
+                : id == _server;
             CoopLog.Info($"Steam session request from {id.m_SteamID}: {(ok ? "accepted" : "ignored")}");
             if (!ok) return;
             SteamNetworkingMessages.AcceptSessionWithUser(ref remote);
-            if (!_peer.IsValid()) _peer = id;
+            if (_isHost) _accepted.Add(id.m_SteamID);
         }
 
         private void OnSessionFailed(SteamNetworkingMessagesSessionFailed_t f)
         {
             var info = f.m_info;
             CSteamID id = info.m_identityRemote.GetSteamID();
-            if (id != _peer) return;
-            _failure = $"Steam session failed ({info.m_eEndReason}): {info.m_szEndDebug}";
+            string why = $"Steam session failed ({info.m_eEndReason}): {info.m_szEndDebug}";
+            if (_isHost)
+            {
+                if (_accepted.Remove(id.m_SteamID)) _failed.Add(new KeyValuePair<ulong, string>(id.m_SteamID, why));
+            }
+            else if (id == _server) _failure = why;
         }
 
-        public void Send(byte[] data, int offset, int count, bool reliable)
+        public void Send(ulong peer, byte[] data, int offset, int count, bool reliable)
         {
-            if (_closed || !_peer.IsValid()) return;
+            if (_closed || peer == 0) return;
             var ident = new SteamNetworkingIdentity();
-            ident.SetSteamID(_peer);
+            ident.SetSteamID(new CSteamID(peer));
             int flags = (reliable ? Constants.k_nSteamNetworkingSend_Reliable : Constants.k_nSteamNetworkingSend_Unreliable)
                         | Constants.k_nSteamNetworkingSend_AutoRestartBrokenSession;
             var h = GCHandle.Alloc(data, GCHandleType.Pinned);
@@ -91,12 +113,12 @@ namespace AirDefenderCoop.Net
                 IntPtr p = h.AddrOfPinnedObject() + offset;
                 EResult r = SteamNetworkingMessages.SendMessageToUser(ref ident, p, (uint)count, flags, Channel);
                 if (r != EResult.k_EResultOK && reliable)
-                    CoopLog.Warn($"Steam send failed: {r} ({count} bytes)");
+                    CoopLog.Warn($"Steam send to {peer} failed: {r} ({count} bytes)");
             }
             finally { h.Free(); }
         }
 
-        public void Poll(List<byte[]> into)
+        public void Poll(List<NetMessage> into)
         {
             if (_closed) return;
             while (true)
@@ -108,11 +130,11 @@ namespace AirDefenderCoop.Net
                     try
                     {
                         var msg = Marshal.PtrToStructure<SteamNetworkingMessage_t>(_recv[i]);
-                        CSteamID from = msg.m_identityPeer.GetSteamID();
-                        if (_peer.IsValid() && from != _peer) continue;
+                        ulong from = msg.m_identityPeer.GetSteamID().m_SteamID;
+                        if (_isHost ? !_accepted.Contains(from) : from != _server.m_SteamID) continue;
                         var buf = new byte[msg.m_cbSize];
                         Marshal.Copy(msg.m_pData, buf, 0, msg.m_cbSize);
-                        into.Add(buf);
+                        into.Add(new NetMessage { From = from, Data = buf });
                     }
                     finally { SteamNetworkingMessage_t.Release(_recv[i]); }
                 }
@@ -120,21 +142,26 @@ namespace AirDefenderCoop.Net
             }
         }
 
-        public void DropPeer()
+        public void TakeFailedPeers(List<KeyValuePair<ulong, string>> into)
         {
-            if (_peer.IsValid())
-            {
-                var ident = new SteamNetworkingIdentity();
-                ident.SetSteamID(_peer);
-                try { SteamNetworkingMessages.CloseSessionWithUser(ref ident); } catch { }
-            }
-            _peer = CSteamID.Nil;
-            _failure = null;
+            into.AddRange(_failed);
+            _failed.Clear();
+        }
+
+        public void DropPeer(ulong peer)
+        {
+            if (peer == 0) return;
+            var ident = new SteamNetworkingIdentity();
+            ident.SetSteamID(new CSteamID(peer));
+            try { SteamNetworkingMessages.CloseSessionWithUser(ref ident); } catch { }
+            _accepted.Remove(peer);
+            if (!_isHost && peer == _server.m_SteamID) _server = CSteamID.Nil;
         }
 
         public void Close()
         {
-            DropPeer();
+            if (_isHost) foreach (var p in new List<ulong>(_accepted)) DropPeer(p);
+            else DropPeer(_server.m_SteamID);
             _closed = true;
             _onRequest?.Dispose();
             _onFailed?.Dispose();

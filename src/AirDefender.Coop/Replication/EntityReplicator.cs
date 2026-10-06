@@ -11,7 +11,8 @@ namespace AirDefenderCoop.Replication
 {
     /// <summary>
     /// Keeps the client's set of contacts identical to the host's and streams their motion.
-    /// Contact ids (IContact.ContactId) are the network identity.
+    /// Contact ids (IContact.ContactId) are the network identity. The host keeps one shared record
+    /// of what the clients have; a client joining mid-session is caught up individually.
     /// </summary>
     public static class EntityReplicator
     {
@@ -43,7 +44,7 @@ namespace AirDefenderCoop.Replication
 
         public static int HostTracked => Known.Count;
 
-        /// <summary>Host: true once the partner has (or is being sent) this contact.</summary>
+        /// <summary>Host: true once the clients have (or are being sent) this contact.</summary>
         public static bool HostHasSpawned(string id) => Known.TryGetValue(id, out var e) && e.Spawned;
         public static int SpawnsSent { get; private set; }
         public static int SpawnsApplied { get; private set; }
@@ -70,11 +71,14 @@ namespace AirDefenderCoop.Replication
 
         // ================================================================ host
 
-        /// <summary>Host: the client reported the contacts it has after loading; diff against ours.</summary>
-        private static void HostPrime(List<string> clientIds)
+        /// <summary>Host: a client reported the contacts it has after loading; diff against ours.</summary>
+        private static void HostPrime(ulong peer, List<string> clientIds)
         {
-            Known.Clear();
             var clientSet = new HashSet<string>(clientIds, StringComparer.Ordinal);
+            // Other clients are already in the world: keep their shared record, catch this one up.
+            if (_hostPrimed && WorldSync.ReadyPeerCount > 1) { CatchUpPeer(peer, clientSet); return; }
+
+            Known.Clear();
             float now = Time.time;
             foreach (var c in ContactRegistry.GetAllContacts())
             {
@@ -85,9 +89,51 @@ namespace AirDefenderCoop.Replication
                 Known[id] = new HostEntry { LastPos = c.transform.position, LastTime = now, Spawned = has, FirstSeen = Time.realtimeSinceStartup };
             }
             // Anything the client has that we do not must go.
-            foreach (var extra in clientSet) SendDespawn(extra);
+            foreach (var extra in clientSet) SendDespawnTo(peer, extra);
             _hostPrimed = true;
             CoopLog.Info($"Entity replication primed: {Known.Count} host contacts, {clientSet.Count} stale on client");
+        }
+
+        /// <summary>
+        /// Host: a client joined while others were already playing. Send it whatever the others were
+        /// given since its world snapshot was taken, and remove what has gone since.
+        /// </summary>
+        private static void CatchUpPeer(ulong peer, HashSet<string> clientSet)
+        {
+            var missing = new List<string>();
+            foreach (var kv in Known)
+            {
+                if (clientSet.Remove(kv.Key)) continue;
+                if (kv.Value.Spawned) missing.Add(kv.Key);
+            }
+            // Contacts the host has but has not announced yet are spawned for everyone later.
+            foreach (var c in ContactRegistry.GetAllContacts())
+            {
+                string id = c == null || IsLocalAuthority(c) ? null : SafeId(c);
+                if (id != null) clientSet.Remove(id);
+            }
+            int sent = 0;
+            if (missing.Count > 0)
+            {
+                Dictionary<string, SpawnCatalog.Record> records = null;
+                try { records = SpawnCatalog.Capture(); }
+                catch (Exception e) { CoopLog.Error("Spawn capture failed: " + e); }
+                foreach (var id in missing)
+                {
+                    SpawnCatalog.Record r;
+                    if (records == null || !records.TryGetValue(id, out r))
+                    {
+                        // Not described by the save format: a structural copy, as for any new contact.
+                        if (!(ContactRegistry.TryGetContact(id, out var c) && c is MonoBehaviour cmb && cmb != null)) continue;
+                        r = SpawnCatalog.Clone(c);
+                    }
+                    CoopSession.SendTo(peer, MsgType.EntitySpawn, w => { w.U8((byte)r.Kind); w.Str(r.Id); w.Str(r.Json); });
+                    SpawnsSent++;
+                    sent++;
+                }
+            }
+            foreach (var extra in clientSet) SendDespawnTo(peer, extra);
+            CoopLog.Info($"Caught up {CoopSession.SenderName}: {sent} spawns, {clientSet.Count} stale contacts removed");
         }
 
         public static void HostTick()
@@ -187,6 +233,11 @@ namespace AirDefenderCoop.Replication
         private static void SendDespawn(string id)
         {
             CoopSession.Send(MsgType.EntityDespawn, w => w.Str(id));
+        }
+
+        private static void SendDespawnTo(ulong peer, string id)
+        {
+            CoopSession.SendTo(peer, MsgType.EntityDespawn, w => w.Str(id));
         }
 
         private static void SendPendingSpawns(float now)

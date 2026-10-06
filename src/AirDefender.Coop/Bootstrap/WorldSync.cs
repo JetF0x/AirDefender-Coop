@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
@@ -14,7 +15,9 @@ namespace AirDefenderCoop.Bootstrap
     /// <summary>
     /// Gets the client into the host's world. The host serialises its live world with the game's
     /// own save snapshot, streams it in chunks, and the client loads it through the game's normal
-    /// load path. Used on join, after the host loads a save, and as a hard resync.
+    /// load path. Used on join, after the host loads a save, and as a hard resync. The host tracks
+    /// each client separately, so a player joining mid-session gets a world of their own while
+    /// everyone else keeps playing.
     /// </summary>
     public static class WorldSync
     {
@@ -29,13 +32,30 @@ namespace AirDefenderCoop.Bootstrap
         private static string _rxAor, _rxTheatre;
         private static byte[] _pendingWorld; // compressed world waiting for the player to pick a profile
 
+        // Host state, per client.
+        private sealed class PeerWorld
+        {
+            public bool Sent;
+            public bool Ready;
+            public int TxId;
+        }
+
+        private static readonly Dictionary<ulong, PeerWorld> PeerWorlds = new Dictionary<ulong, PeerWorld>();
         private static int _txId;
-        private static bool _hostWorldSent;
 
         /// <summary>Client: the host world has been loaded and live replication may apply.</summary>
         public static bool ClientWorldReady { get; private set; }
-        /// <summary>Host: the client confirmed it loaded the current world.</summary>
-        public static bool PartnerWorldReady { get; private set; }
+        /// <summary>Host: at least one client confirmed it loaded the current world.</summary>
+        public static bool PartnerWorldReady
+        {
+            get { foreach (var pw in PeerWorlds.Values) if (pw.Ready) return true; return false; }
+        }
+        /// <summary>Host: how many clients are in the current world.</summary>
+        public static int ReadyPeerCount
+        {
+            get { int n = 0; foreach (var pw in PeerWorlds.Values) if (pw.Ready) n++; return n; }
+        }
+        public static bool IsPeerReady(ulong peer) => PeerWorlds.TryGetValue(peer, out var pw) && pw.Ready;
         /// <summary>True while this process is applying a world it received.</summary>
         public static bool ApplyingRemoteWorld { get; private set; }
         public static string Status { get; private set; } = "";
@@ -43,12 +63,13 @@ namespace AirDefenderCoop.Bootstrap
         public static int WorldGeneration { get; private set; }
 
         public static event Action ClientWorldLoaded;
+        /// <summary>Host: a new world went to every client at once (they all reload).</summary>
         public static event Action HostWorldSent;
-        /// <summary>Host: the client listed the contacts present after its load.</summary>
-        public static event Action<System.Collections.Generic.List<string>> PartnerContactsReported;
+        /// <summary>Host: a client (peer id) listed the contacts present after its load.</summary>
+        public static event Action<ulong, List<string>> PartnerContactsReported;
 
         /// <summary>Client: tell the host which contacts exist locally after loading its world.</summary>
-        public static void ReportClientContacts(System.Collections.Generic.List<string> ids)
+        public static void ReportClientContacts(List<string> ids)
         {
             CoopSession.Send(MsgType.ClientContacts, w => { w.I32(WorldGeneration); w.StrList(ids); });
             CoopLog.Info($"Reported {ids.Count} local contacts to the host");
@@ -60,27 +81,36 @@ namespace AirDefenderCoop.Bootstrap
             CoopSession.Register(MsgType.WorldChunk, OnWorldChunk);
             CoopSession.Register(MsgType.WorldEnd, OnWorldEnd);
             CoopSession.Register(MsgType.WorldLoaded, OnWorldLoaded);
-            CoopSession.Register(MsgType.WorldRequest, _ => { if (CoopSession.IsHost) RequestResend("client asked"); });
+            CoopSession.Register(MsgType.WorldRequest, _ => { if (CoopSession.IsHost) RequestResendTo(CoopSession.CurrentSender, "client asked"); });
             CoopSession.Register(MsgType.ReturnToMenu, OnReturnToMenu);
             CoopSession.Register(MsgType.ClientContacts, r =>
             {
                 if (!CoopSession.IsHost) return;
+                ulong peer = CoopSession.CurrentSender;
                 r.I32();
                 var ids = r.StrList();
-                CoopLog.Info($"Client reports {ids.Count} contacts after load");
-                try { PartnerContactsReported?.Invoke(ids); } catch (Exception e) { CoopLog.Error("PartnerContactsReported: " + e); }
+                if (!IsPeerReady(peer)) return; // stale report from before a newer world
+                CoopLog.Info($"{CoopSession.SenderName} reports {ids.Count} contacts after load");
+                try { PartnerContactsReported?.Invoke(peer, ids); } catch (Exception e) { CoopLog.Error("PartnerContactsReported: " + e); }
             });
+            CoopSession.PeerJoined += peer =>
+            {
+                PeerWorlds[peer] = new PeerWorld();
+                Status = "Player joined - sending the world";
+            };
+            CoopSession.PeerLeft += (peer, _) =>
+            {
+                PeerWorlds.Remove(peer);
+                UpdateHostStatus();
+            };
             CoopSession.PartnerJoined += () =>
             {
-                _hostWorldSent = false;
-                PartnerWorldReady = false;
                 ClientWorldReady = false;
-                Status = CoopSession.IsHost ? "Partner connected" : "Waiting for the host's world";
+                if (!CoopSession.IsHost) Status = "Waiting for the host's world";
             };
             CoopSession.PartnerLeft += reason =>
             {
                 bool wasInHostWorld = CoopSession.Mode != CoopMode.Host && ClientWorldReady;
-                PartnerWorldReady = false;
                 ClientWorldReady = false;
                 if (wasInHostWorld && PlayerSession.IsLoggedIn())
                 {
@@ -103,8 +133,13 @@ namespace AirDefenderCoop.Bootstrap
                     Status = "Training missions are single-player - start a normal game to play together";
                     return;
                 }
-                if (!_hostWorldSent && PlayerSession.IsLoggedIn() && PlayerSession.SecondsSinceLogin() > 3f && !GameSaveManager.HasLoadedRecently())
-                    SendWorld();
+                if (PlayerSession.IsLoggedIn() && PlayerSession.SecondsSinceLogin() > 3f && !GameSaveManager.HasLoadedRecently())
+                {
+                    List<ulong> targets = null;
+                    foreach (var kv in PeerWorlds)
+                        if (!kv.Value.Sent) (targets ?? (targets = new List<ulong>())).Add(kv.Key);
+                    if (targets != null) SendWorld(targets);
+                }
             }
             else if (_pendingWorld != null && JoinGate.CanJoinNow)
             {
@@ -114,21 +149,35 @@ namespace AirDefenderCoop.Bootstrap
             }
         }
 
-        /// <summary>Host: forget the sent world so the next tick sends a fresh one.</summary>
+        /// <summary>Host: forget the sent world so the next tick sends every client a fresh one.</summary>
         public static void RequestResend(string reason)
         {
             if (!CoopSession.IsHost) return;
-            CoopLog.Info($"World resend requested: {reason}");
-            _hostWorldSent = false;
-            PartnerWorldReady = false;
+            CoopLog.Info($"World resend to everyone requested: {reason}");
+            foreach (var pw in PeerWorlds.Values) { pw.Sent = false; pw.Ready = false; }
+        }
+
+        /// <summary>Host: resend the world to one client only.</summary>
+        public static void RequestResendTo(ulong peer, string reason)
+        {
+            if (!CoopSession.IsHost || !PeerWorlds.TryGetValue(peer, out var pw)) return;
+            CoopLog.Info($"World resend to {CoopSession.SenderName} requested: {reason}");
+            pw.Sent = false;
+            pw.Ready = false;
+        }
+
+        private static void UpdateHostStatus()
+        {
+            if (!CoopSession.IsHost) return;
+            Status = PeerWorlds.Count == 0 ? "" : $"{ReadyPeerCount}/{PeerWorlds.Count} players in the world";
         }
 
         // ---------------------------------------------------------------- host
 
-        private static void SendWorld()
+        private static void SendWorld(List<ulong> targets)
         {
-            _hostWorldSent = true;
-            PartnerWorldReady = false;
+            bool everyone = targets.Count == PeerWorlds.Count;
+            foreach (var peer in targets) { var pw = PeerWorlds[peer]; pw.Sent = true; pw.Ready = false; }
             var sw = Stopwatch.StartNew();
             string json;
             try
@@ -151,18 +200,25 @@ namespace AirDefenderCoop.Bootstrap
             int chunks = (packed.Length + ChunkSize - 1) / ChunkSize;
             string aor = PlayerSession.GetAor().ToString();
             string theatre = PlayerSession.GetTheatre().ToString();
-            CoopSession.Send(MsgType.WorldBegin, w => { w.I32(id); w.I32(chunks); w.I32(raw.Length); });
-            for (int i = 0; i < chunks; i++)
+            foreach (var peer in targets)
             {
-                int off = i * ChunkSize;
-                int len = Math.Min(ChunkSize, packed.Length - off);
-                int index = i;
-                CoopSession.Send(MsgType.WorldChunk, w => { w.I32(id); w.I32(index); w.Bytes(packed, off, len); });
+                PeerWorlds[peer].TxId = id;
+                CoopSession.SendTo(peer, MsgType.WorldBegin, w => { w.I32(id); w.I32(chunks); w.I32(raw.Length); });
+                for (int i = 0; i < chunks; i++)
+                {
+                    int off = i * ChunkSize;
+                    int len = Math.Min(ChunkSize, packed.Length - off);
+                    int index = i;
+                    CoopSession.SendTo(peer, MsgType.WorldChunk, w => { w.I32(id); w.I32(index); w.Bytes(packed, off, len); });
+                }
+                CoopSession.SendTo(peer, MsgType.WorldEnd, w => { w.I32(id); w.Str(aor); w.Str(theatre); });
             }
-            CoopSession.Send(MsgType.WorldEnd, w => { w.I32(id); w.Str(aor); w.Str(theatre); });
-            Status = $"World sent ({packed.Length / 1024} KB)";
-            CoopLog.Info($"World #{id} sent: json {raw.Length} B, packed {packed.Length} B in {chunks} chunks; snapshot {snapMs} ms, total {sw.ElapsedMilliseconds} ms");
-            try { HostWorldSent?.Invoke(); } catch (Exception e) { CoopLog.Error("HostWorldSent: " + e); }
+            Status = $"World sent to {targets.Count} player(s) ({packed.Length / 1024} KB)";
+            CoopLog.Info($"World #{id} sent to {targets.Count}/{PeerWorlds.Count} clients: json {raw.Length} B, packed {packed.Length} B in {chunks} chunks; snapshot {snapMs} ms, total {sw.ElapsedMilliseconds} ms");
+            if (everyone)
+            {
+                try { HostWorldSent?.Invoke(); } catch (Exception e) { CoopLog.Error("HostWorldSent: " + e); }
+            }
         }
 
         private static void OnWorldLoaded(NetReader r)
@@ -170,18 +226,18 @@ namespace AirDefenderCoop.Bootstrap
             int id = r.I32();
             bool ok = r.Bool();
             string err = r.Str();
-            if (id != _txId) return;
-            PartnerWorldReady = ok;
-            Status = ok ? "Partner is in the world" : "Partner failed to load: " + err;
-            CoopLog.Info($"Client loaded world #{id}: {ok} {err}");
+            if (!CoopSession.IsHost || !PeerWorlds.TryGetValue(CoopSession.CurrentSender, out var pw) || id != pw.TxId) return;
+            pw.Ready = ok;
+            UpdateHostStatus();
+            if (!ok) Status = $"{CoopSession.SenderName} failed to load: {err}";
+            CoopLog.Info($"{CoopSession.SenderName} loaded world #{id}: {ok} {err}");
         }
 
         /// <summary>Host returned to the main menu: send the partner there too.</summary>
         public static void HostReturnedToMenu()
         {
             if (!CoopSession.IsHost || !CoopSession.Connected) return;
-            _hostWorldSent = false;
-            PartnerWorldReady = false;
+            foreach (var pw in PeerWorlds.Values) { pw.Sent = false; pw.Ready = false; }
             CoopSession.Send(MsgType.ReturnToMenu, null);
         }
 

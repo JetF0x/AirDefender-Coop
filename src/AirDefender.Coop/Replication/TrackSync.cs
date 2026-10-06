@@ -48,7 +48,7 @@ namespace AirDefenderCoop.Replication
         public static void Init()
         {
             CoopSession.Register(MsgType.TrackTable, OnTable);
-            Bootstrap.WorldSync.PartnerContactsReported += _ => HostSent.Clear();
+            Bootstrap.WorldSync.PartnerContactsReported += (_, __) => HostSent.Clear();
             CoopSession.PartnerLeft += _ => { HostSent.Clear(); ClientTable.Clear(); };
             Bootstrap.WorldSync.ClientWorldLoaded += () => ClientTable.Clear();
         }

@@ -79,9 +79,9 @@ namespace AirDefenderCoop.Ui
             if (CoopSession.Mode == CoopMode.Offline) return;
             string text;
             if (CoopSession.Connected)
-                text = $"CO-OP {CoopSession.RoleTag} | partner {CoopSession.PartnerName} | {CoopSession.RttMs:0} ms | {WorldSync.Status}";
+                text = $"CO-OP {CoopSession.RoleTag} | {CoopSession.Players.Count}/{(CoopSession.IsHost ? CoopSession.MaxPlayers.ToString() : "?")} players | {CoopSession.RttMs:0} ms | {WorldSync.Status}";
             else if (CoopSession.IsHost)
-                text = $"CO-OP HOST | waiting for partner ({CoopSession.TransportDescription})  [{CoopConfig.PanelKey.Value}]";
+                text = $"CO-OP HOST | waiting for players ({CoopSession.TransportDescription})  [{CoopConfig.PanelKey.Value}]";
             else
                 text = $"CO-OP | connecting... ({CoopSession.TransportDescription})";
             float scale = Mathf.Max(1f, Screen.height / 1080f);
@@ -91,6 +91,7 @@ namespace AirDefenderCoop.Ui
         private static void DrawWindow(int id)
         {
             GUILayout.Label(StatusText(), _label);
+            DrawPlayerList();
             if (!string.IsNullOrEmpty(CoopSession.LastError)) GUILayout.Label("Last error: " + CoopSession.LastError, _small);
             if (!string.IsNullOrEmpty(SteamLobbyService.Status) && CoopSession.Mode != CoopMode.Offline) GUILayout.Label("Steam: " + SteamLobbyService.Status, _small);
             GUILayout.Space(6);
@@ -99,7 +100,7 @@ namespace AirDefenderCoop.Ui
             {
                 case CoopMode.Offline:
                     GUI.enabled = SteamLobbyService.Available;
-                    if (GUILayout.Button("Host co-op (invite a Steam friend)", GUILayout.Height(30))) SteamLobbyService.Host();
+                    if (GUILayout.Button($"Host co-op (invite up to {CoopSession.MaxPlayers - 1} Steam friends)", GUILayout.Height(30))) SteamLobbyService.Host();
                     GUI.enabled = true;
                     GUILayout.Space(4);
                     GUILayout.Label("Direct connection (LAN / local testing):", _small);
@@ -111,19 +112,19 @@ namespace AirDefenderCoop.Ui
                     break;
 
                 case CoopMode.Host:
-                    if (SteamLobbyService.Lobby.IsValid() && !CoopSession.Connected)
+                    if (SteamLobbyService.Lobby.IsValid() && CoopSession.HasFreeSlot)
                     {
                         if (GUILayout.Button("Invite with the Steam overlay...", GUILayout.Height(28)))
                             SteamLobbyService.OpenInviteDialog();
                         DrawFriendList();
                     }
-                    if (CoopSession.Connected && GUILayout.Button("Resend world to partner")) WorldSync.RequestResend("host pressed resync");
+                    if (CoopSession.Connected && GUILayout.Button("Resend world to everyone")) WorldSync.RequestResend("host pressed resync");
                     if (GUILayout.Button("Stop hosting")) StopAll("host stopped");
                     break;
 
                 case CoopMode.Client:
                     if (CoopSession.Connected && GUILayout.Button("Request world resync")) CoopSession.Send(MsgType.WorldRequest, null);
-                    if (GUILayout.Button("Leave session")) StopAll("partner left");
+                    if (GUILayout.Button("Leave session")) StopAll("player left");
                     break;
             }
 
@@ -149,7 +150,7 @@ namespace AirDefenderCoop.Ui
             _friendScroll = GUILayout.BeginScrollView(_friendScroll, GUILayout.Height(160));
             foreach (var f in _friends)
             {
-                if (!f.Online) continue;
+                if (!f.Online || SteamLobbyService.IsInLobby(f.Id)) continue;
                 GUILayout.BeginHorizontal();
                 GUILayout.Label((f.InThisGame ? "[in Air Defender] " : "") + f.Name, _small, GUILayout.Width(300));
                 if (GUILayout.Button("Invite", GUILayout.Width(70))) SteamLobbyService.InviteFriend(f.Id);
@@ -165,12 +166,33 @@ namespace AirDefenderCoop.Ui
                 case CoopMode.Offline: return "Not in a co-op session.";
                 case CoopMode.Host:
                     return CoopSession.Connected
-                        ? $"Hosting. Partner: {CoopSession.PartnerName} ({CoopSession.RttMs:0} ms)\n{WorldSync.Status}"
-                        : "Hosting - waiting for your partner to join.";
+                        ? $"Hosting {CoopSession.Players.Count}/{CoopSession.MaxPlayers} players.\n{WorldSync.Status}"
+                        : $"Hosting - waiting for players to join (up to {CoopSession.MaxPlayers}).";
                 default:
                     return CoopSession.Connected
-                        ? $"Connected to {CoopSession.PartnerName} ({CoopSession.RttMs:0} ms)\n{WorldSync.Status}"
+                        ? $"Connected to {CoopSession.HostName} ({CoopSession.RttMs:0} ms)\n{WorldSync.Status}"
                         : "Connecting to the host...";
+            }
+        }
+
+        private static GUIStyle _player;
+
+        /// <summary>Everyone in the session in their overlay colour, with ping; the host can remove players.</summary>
+        private static void DrawPlayerList()
+        {
+            if (!CoopSession.Connected || CoopSession.Players.Count == 0) return;
+            if (_player == null) _player = new GUIStyle(_small) { fontStyle = FontStyle.Bold };
+            GUILayout.Space(4);
+            foreach (var p in CoopSession.Players)
+            {
+                GUILayout.BeginHorizontal();
+                bool me = p.Slot == CoopSession.LocalSlot;
+                _player.normal.textColor = me ? new Color(0.4f, 1f, 0.4f) : PartnerOverlay.ColorOf(p.Slot);
+                string role = p.Slot == 0 ? " (host)" : "";
+                string ping = me ? "" : $"  {p.RttMs:0} ms";
+                GUILayout.Label($"{p.Name}{role}{(me ? " - you" : "")}{ping}", _player, GUILayout.Width(330));
+                if (CoopSession.IsHost && p.Slot != 0 && GUILayout.Button("Remove", GUILayout.Width(70))) CoopSession.Kick(p.Slot);
+                GUILayout.EndHorizontal();
             }
         }
 

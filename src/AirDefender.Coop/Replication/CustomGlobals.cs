@@ -44,7 +44,7 @@ namespace AirDefenderCoop.Replication
         public static void Init()
         {
             CoopSession.Register(MsgType.CustomGlobal, OnGlobal);
-            Bootstrap.WorldSync.PartnerContactsReported += _ => { foreach (var e in Entries) e.LastSent = null; };
+            Bootstrap.WorldSync.PartnerContactsReported += (_, __) => { foreach (var e in Entries) e.LastSent = null; };
         }
 
         public static void HostTick()

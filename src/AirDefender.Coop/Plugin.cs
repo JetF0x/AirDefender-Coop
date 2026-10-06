@@ -17,7 +17,7 @@ namespace AirDefenderCoop
     {
         public const string Guid = "airdefender.coop";
         public const string Name = "Air Defender Co-op";
-        public const string Version = "0.1.0";
+        public const string Version = "0.2.0";
 
         public static Plugin Instance { get; private set; }
         internal static Harmony Harmony { get; private set; }
