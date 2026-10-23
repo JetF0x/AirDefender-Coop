@@ -50,6 +50,13 @@ namespace AirDefenderCoop.Commands
             CoopSession.Register(MsgType.CommandResult, OnResult);
         }
 
+        /// <summary>Keeps a route id that is no longer routed, so the ids after it stay the same.</summary>
+        public static void Reserve(string name)
+        {
+            Routes.Add(null);
+            CoopLog.Debug($"Route {Routes.Count - 1} reserved ({name} runs locally)");
+        }
+
         /// <summary>Registers and patches one game method. Order of registration must match on both peers.</summary>
         public static void Add(Harmony h, Type type, string method, Type[] args = null, bool? blocking = null)
         {

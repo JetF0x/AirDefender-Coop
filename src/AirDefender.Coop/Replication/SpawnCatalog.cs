@@ -101,11 +101,13 @@ namespace AirDefenderCoop.Replication
                 try { go.AddComponent(t); }
                 catch (Exception e) { CoopLog.Warn($"Clone {id}: cannot add {t.Name}: {e.Message}"); }
             }
-            // Give contact components their id before they wake up.
+            // Give contact components their id before they wake up: a "contactId" field, or the
+            // backing field of a ContactId auto-property (RadarCircleMover).
+            const System.Reflection.BindingFlags inst = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
             foreach (var comp in go.GetComponents<MonoBehaviour>())
             {
                 if (!(comp is IContact)) continue;
-                var f = comp.GetType().GetField("contactId", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+                var f = comp.GetType().GetField("contactId", inst) ?? comp.GetType().GetField("<ContactId>k__BackingField", inst);
                 if (f != null && f.FieldType == typeof(string)) f.SetValue(comp, id);
             }
             go.SetActive(true);
@@ -150,8 +152,20 @@ namespace AirDefenderCoop.Replication
                     GSM.RestoreCivilianAircraft(new List<GSM.CivilianAircraftState> { JsonUtility.FromJson<GSM.CivilianAircraftState>(json) });
                     return true;
                 case Kind.Vfr:
-                    GSM.RestoreVFRAircraft(new List<GSM.VFRAircraftState> { JsonUtility.FromJson<GSM.VFRAircraftState>(json) });
+                {
+                    // A VFR flight is only a contact once it has an OrbitMover (its takeoff mover is
+                    // not one). The game restores a flight that is still flying out to its orbit as a
+                    // fresh takeoff sortie, which on a puppet never becomes a contact; take the orbit
+                    // branch instead and let field sync set the mover's real transit state.
+                    var st = JsonUtility.FromJson<GSM.VFRAircraftState>(json);
+                    if (st != null && !st.isInOrbit)
+                    {
+                        st.isInOrbit = true;
+                        if (!(st.orbitRadiusMiles > 0f)) st.orbitRadiusMiles = 1f;
+                    }
+                    GSM.RestoreVFRAircraft(new List<GSM.VFRAircraftState> { st });
                     return true;
+                }
                 case Kind.Enemy:
                     GSM.RestoreActiveEnemies(new List<EnemyAircraftController.SavedState> { JsonUtility.FromJson<EnemyAircraftController.SavedState>(json) });
                     return true;

@@ -11,7 +11,7 @@ namespace AirDefenderCoop.Diagnostics
     /// two-instance test can run unattended. Each script is a list of timed steps; results are
     /// written to the coop log with an "[AUTOTEST]" prefix.
     /// </summary>
-    public static class AutoTest
+    public static partial class AutoTest
     {
         private sealed class Step
         {
@@ -46,6 +46,34 @@ namespace AirDefenderCoop.Diagnostics
                     break;
                 case "client-cmds":
                     AddClientCommandChecks();
+                    break;
+                case "client-events":
+                    AddClientEventChecks();
+                    break;
+                case "solo-qra":
+                    // Single player (no co-op): how the game's own QRA launch sequence progresses.
+                    _steps.Add(new Step { Name = "start new UK game", Run = StartNewGame, Delay = 1f });
+                    _steps.Add(new Step { Name = "wait for login", Ready = PlayerSession.IsLoggedIn, Delay = 5f });
+                    _steps.Add(new Step { Name = "speed x5", Run = () => SetSpeed(5f) });
+                    _steps.Add(new Step
+                    {
+                        Name = "QRA launch", Ready = () => PickIdentTarget() != null, Delay = 10f, Timeout = 120f,
+                        Run = () =>
+                        {
+                            string t = PickIdentTarget();
+                            var tr = TrackManager.GetTrackTransform(t);
+                            QRAQuickLaunchService.LaunchForContactAuto(t, tr != null ? tr.position : Vector3.zero);
+                            CoopLog.Info($"[AUTOTEST] QRA launched against {t}");
+                        }
+                    });
+                    for (int i = 0; i < 9; i++) _steps.Add(new Step { Name = "solo state", Delay = 20f, Run = () => DumpPanelState("solo") });
+                    break;
+                case "host-events":
+                    _steps.Add(new Step { Name = "start new UK game", Run = StartNewGame, Delay = 1f });
+                    _steps.Add(new Step { Name = "wait for login", Ready = PlayerSession.IsLoggedIn, Delay = 5f });
+                    _steps.Add(new Step { Name = "wait for partner world", Ready = () => Bootstrap.WorldSync.PartnerWorldReady, Delay = 2f });
+                    _steps.Add(new Step { Name = "speed x5", Run = () => SetSpeed(5f) });
+                    AddHostEventSteps();
                     break;
                 case "host5x":
                     _steps.Add(new Step { Name = "start new UK game", Run = StartNewGame, Delay = 1f });

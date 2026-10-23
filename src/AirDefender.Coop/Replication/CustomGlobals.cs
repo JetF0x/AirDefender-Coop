@@ -7,8 +7,8 @@ using UnityEngine;
 namespace AirDefenderCoop.Replication
 {
     /// <summary>
-    /// Game state with shapes the field codec cannot carry (nested collections), synchronised
-    /// through the game's own export/import functions as JSON whenever it changes.
+    /// Game state with shapes the field codec cannot carry (nested collections, structs, static
+    /// readonly collections), synchronised as JSON whenever it changes.
     /// </summary>
     internal static class CustomGlobals
     {
@@ -58,6 +58,10 @@ namespace AirDefenderCoop.Replication
             public Func<string> Capture;
             public Action<string> Apply;
             public string LastSent;
+            /// <summary>Client: re-apply the last value now and then, because local code also writes it.</summary>
+            public bool Reapply;
+            public string LastReceived;
+            public bool CaptureFailed;   // warned once
         }
 
         private static readonly List<Entry> Entries = new List<Entry>
@@ -75,14 +79,37 @@ namespace AirDefenderCoop.Replication
                 },
             },
             new Entry { Key = "ChaffClouds", Capture = CaptureChaff, Apply = ApplyChaff },
+            new Entry { Key = "PendingQra", Capture = PanelMirrors.CapturePendingQra, Apply = PanelMirrors.ApplyPendingQra, Reapply = true },
+            new Entry { Key = "HerculesFlights", Capture = PanelMirrors.CaptureHercules, Apply = PanelMirrors.ApplyHercules },
+            new Entry { Key = "ChinookFlights", Capture = PanelMirrors.CaptureChinook, Apply = PanelMirrors.ApplyChinook },
+            // Restored interceptors register channels locally on the client too.
+            new Entry { Key = "RadioChannels", Capture = PanelMirrors.CaptureRadio, Apply = PanelMirrors.ApplyRadio, Reapply = true },
         };
 
         private static float _next;
+        private static float _nextReapply;
 
         public static void Init()
         {
             CoopSession.Register(MsgType.CustomGlobal, OnGlobal);
             Bootstrap.WorldSync.PartnerContactsReported += (_, __) => { foreach (var e in Entries) e.LastSent = null; };
+            Bootstrap.WorldSync.ClientWorldLoaded += () => { foreach (var e in Entries) e.LastReceived = null; };
+        }
+
+        public static void ClientTick()
+        {
+            if (!ClientGate.PuppetActive) return;
+            float now = Time.realtimeSinceStartup;
+            if (now < _nextReapply) return;
+            _nextReapply = now + 2f;
+            foreach (var e in Entries)
+                if (e.Reapply && e.LastReceived != null) ApplyEntry(e, e.LastReceived);
+        }
+
+        private static void ApplyEntry(Entry e, string json)
+        {
+            try { ClientGate.AllowLocalAction(() => e.Apply(json)); }
+            catch (Exception ex) { CoopLog.Warn($"apply {e.Key}: {ex.Message}"); }
         }
 
         public static void HostTick()
@@ -95,7 +122,12 @@ namespace AirDefenderCoop.Replication
             {
                 string json;
                 try { json = e.Capture(); }
-                catch (Exception ex) { CoopLog.Debug($"capture {e.Key}: {ex.Message}"); continue; }
+                catch (Exception ex)
+                {
+                    if (!e.CaptureFailed) CoopLog.Warn($"capture {e.Key}: {ex}");
+                    e.CaptureFailed = true;
+                    continue;
+                }
                 if (json == e.LastSent) continue;
                 e.LastSent = json;
                 CoopSession.Send(MsgType.CustomGlobal, w => { w.Str(e.Key); w.Str(json); });
@@ -110,8 +142,8 @@ namespace AirDefenderCoop.Replication
             foreach (var e in Entries)
             {
                 if (e.Key != key) continue;
-                try { ClientGate.AllowLocalAction(() => e.Apply(json)); }
-                catch (Exception ex) { CoopLog.Warn($"apply {key}: {ex.Message}"); }
+                e.LastReceived = json;
+                ApplyEntry(e, json);
             }
         }
     }

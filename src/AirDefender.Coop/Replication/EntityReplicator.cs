@@ -359,6 +359,38 @@ namespace AirDefenderCoop.Replication
             }
         }
 
+        private static float _nextIdRepair;
+        public static int IdRepairs { get; private set; }
+
+        /// <summary>
+        /// Client: ContactRegistry maps a contact by the id it had when it last registered. Game code
+        /// re-registers after changing an id (RadarCircleMover.Configure); on a puppet the id
+        /// arrives by field sync instead, so the contact would stay unreachable by its real id and
+        /// miss every position update. Re-register those.
+        /// </summary>
+        private static void RepairRegistryIds()
+        {
+            List<IContact> stale = null;
+            foreach (var c in ContactRegistry._contactsList)
+            {
+                if (c == null || (c is MonoBehaviour mb && mb == null)) continue;
+                string id = SafeId(c);
+                if (id == null) continue;
+                if (ContactRegistry._idByContact.TryGetValue(c, out var recorded) && recorded == id) continue;
+                (stale ?? (stale = new List<IContact>())).Add(c);
+            }
+            if (stale == null) return;
+            ClientGate.AllowLocalAction(() =>
+            {
+                foreach (var c in stale)
+                {
+                    ContactRegistry.Register(c);
+                    IdRepairs++;
+                    CoopLog.Debug($"registry id repaired: {SafeId(c)} ({c.GetType().Name})");
+                }
+            });
+        }
+
         /// <summary>Client: a contact registered. Anything the host did not sanction is a local leak.</summary>
         internal static void ClientOnRegister(IContact c)
         {
@@ -378,6 +410,11 @@ namespace AirDefenderCoop.Replication
             {
                 _adoptAt = -1f;
                 ClientAdoptLoadedWorld();
+            }
+            if (ClientGate.PuppetActive && Time.realtimeSinceStartup >= _nextIdRepair)
+            {
+                _nextIdRepair = Time.realtimeSinceStartup + 1f;
+                RepairRegistryIds();
             }
             if (RogueToDestroy.Count == 0) return;
             ClientGate.AllowLocalAction(() =>

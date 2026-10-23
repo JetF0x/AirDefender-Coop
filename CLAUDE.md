@@ -24,7 +24,7 @@ pwsh scripts/run-local-test.ps1 -HostScript host5x -ClientScript client-cmds -Se
 pwsh scripts/run-local-test.ps1 -HostScript host5x -ClientScript client-cmds -Clients 3 -JoinStagger 25 -Seconds 200
 ```
 
-  This **kills any running `Air Defender` process**, runs `install.ps1`, starts a host and N `--coop-sandbox` clients, and with `-Seconds` prints every `BepInEx/coop-<pid>.log` at the end. Check those logs for `[DIGEST]` (client world vs host world), `[AUTOTEST]` step results and errors. The BepInEx log is `../BepInEx/LogOutput.log`. Autotest scripts (`host`, `host5x`, `client`, `client-cmds`, `observe`) are defined in `Diagnostics/AutoTest.cs`. CLI flags (`--coop-host`, `--coop-join`, `--coop-max-players`, `--coop-sandbox`, `--coop-autotest`, `--coop-profile`) are parsed in `CoopConfig.cs` and listed in the README.
+  This **kills any running `Air Defender` process**, runs `install.ps1`, starts a host and N `--coop-sandbox` clients, and with `-Seconds` prints every `BepInEx/coop-<pid>.log` at the end. Check those logs for `[DIGEST]` (client world vs host world), `[AUTOTEST]` step results and errors. The BepInEx log is `../BepInEx/LogOutput.log`. Autotest scripts (`host`, `host5x`, `client`, `client-cmds`, `observe`, and `host-events` with `client-events` for host-only presentation, end screen and panel mirrors, and `solo-qra`) are defined in `Diagnostics/AutoTest*.cs`. Run the event pair with `run-local-test.ps1 -HostScript host-events -ClientScript client-events -Seconds 240`. CLI flags (`--coop-host`, `--coop-join`, `--coop-max-players`, `--coop-sandbox`, `--coop-autotest`, `--coop-profile`) are parsed in `CoopConfig.cs` and listed in the README.
 
 ## Architecture
 

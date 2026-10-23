@@ -6,7 +6,7 @@ hosts; up to three Steam friends join with normal Steam invites, and everyone wo
 air picture**: identifying tracks, scrambling QRA, tasking fighters, tankers and AWACS, and running
 the battle together. The player limit is a host setting (default 4, up to 16).
 
-> **Status: v0.2.1, early test build, for game build 26140834.** Two PCs have connected over Steam peer-to-peer (v0.1.0).
+> **Status: v0.2.2, early test build, for game build 26140834.** Two PCs have connected over Steam peer-to-peer (v0.1.0).
 > Sessions with more than two players have only been tested locally, with several game instances on
 > one PC over loopback. Expect rough edges. See [Known limitations](#known-limitations).
 
@@ -46,7 +46,16 @@ game. This repository contains **no game files**.
   - chaff clouds on every radar; the Red Arrows display team flies its timetable on every PC
 - **Shared radio and console:**
   - the host's ASMA console messages, radio voice traffic and alerts are forwarded to every client
+  - sounds, alert banners and music cues the host's simulation triggers are played on every PC
+    (explosions, missile warnings, score awards and penalties, "friendly aircraft lost")
+  - nuclear blasts are drawn on every map
+  - the end-of-game debrief (victory or defeat) appears for everyone; "Continue playing" after a
+    victory resumes the shared game for all players
   - messages and sounds that a client also produces on its own are de-duplicated
+- **Shared panels:**
+  - pending QRA launches with their countdowns, supply flights (Hercules and Chinook) and the
+    radio channel list, including training-sortie channels, match the host's on every PC
+  - the QRA launch dialog opens on the screen of the player who asked for it
   - buttons on forwarded ASMA tasking messages work for clients
 - **Player awareness:**
   - every other player's cursor, callsign and hooked tracks are shown in that player's colour
@@ -94,13 +103,13 @@ host forwards cursors and pings between them.
 | Transport | `src/.../Net` | `SteamTransport` (Steam Datagram Relay P2P, one session per client) and `TcpTransport` (one connection per client), with length-prefixed binary messages |
 | Session | `src/.../Session` | Per-player handshake (protocol, mod version, game build fingerprint, free slot), heartbeats and timeouts, player slots and the player list; the Steam lobby and invites |
 | World join | `Bootstrap/WorldSync.cs` | Host captures the world with the game's `GameSaveManager.BuildSnapshot()` and gzip-streams it to the joining player only; the client loads it via `LoadFromPath` + `PlayerSession.Login` |
-| Puppet mode | `Puppet/` | Harmony prefixes switch off 68 per-frame simulation methods (spawners, campaign directors, movers, AI, weapons) and 9 tick-scheduled systems on each client; 29 scoring entry points become host-only |
+| Puppet mode | `Puppet/` | Harmony prefixes switch off 69 per-frame simulation methods (spawners, campaign directors, movers, AI, weapons) and 9 tick-scheduled systems on each client; 29 scoring entry points become host-only |
 | Entities | `Replication/EntityReplicator.cs`, `SpawnCatalog.cs` | `IContact.ContactId` is the network id. New aircraft are rebuilt from the game's own per-entity save records and restore code, with a structural-copy fallback. Positions stream at 5 Hz with dead reckoning. A player joining mid-game is sent whatever spawned or despawned since their snapshot, and field state is resent once to everyone. |
 | State | `StateReplicator.cs`, `FieldCodec.cs`, `GlobalTargets.cs`, `CustomGlobals.cs` | Reflection-based per-field delta sync of every game component on every aircraft, plus global services (scoring, base stocks, casualties, campaign, radar stations, track serials, base inventory) |
 | Tracks | `TrackSync.cs`, `RadarHitSync.cs` | Ground radar sweeps run locally on both sides, so tracks move in step with each player's own sweep. Track labels are host-authoritative. Non-ground hits (Link 11, datalinks, missiles, jamming) are forwarded. |
 | Time | `TimeSync.cs` | The host owns speed, pause and the operational timeline |
-| Commands | `Commands/` | 86 game methods plus identification, speed and ASMA-option commands are routed from clients to the host, which runs them in arrival order. Calls that return a result block for one round trip so the game's UI continues with the host's real outcome (e.g. a freshly launched fighter); the result goes back to the caller only. |
-| Presentation | `PresentationSync.cs`, `UI/` | ASMA, voice and alert forwarding; F9 panel; player overlay |
+| Commands | `Commands/` | 84 game methods plus identification, speed and ASMA-option commands are routed from clients to the host, which runs them in arrival order. Calls that return a result block for one round trip so the game's UI continues with the host's real outcome (e.g. a freshly launched fighter); the result goes back to the caller only. |
+| Presentation | `PresentationSync.cs`, `EndGameSync.cs`, `PanelMirrors.cs`, `UI/` | ASMA, voice and alert forwarding; sounds and banners from the host's simulation, nuclear blasts, music cues; the end-of-game debrief; mirrored panel data (pending QRA, supply flights, radio channels); F9 panel; player overlay |
 | Diagnostics | `Diagnostics/` | Per-process logs, a host-vs-client world digest every 5 s on every client, scripted autotests, entity dumps (Ctrl+F10) |
 
 ### Measured locally (two instances, one PC)
@@ -147,12 +156,9 @@ host forwards cursors and pings between them.
 - **UK campaign only so far.** The Falklands theatre is untested, and training missions are blocked
   in co-op.
 - **Not yet replicated:**
-  - shoot-down and nuclear visual effects
-  - the end-of-game screen
-  - pending-QRA countdowns in clients' panels
-  - supply-flight lists
-  - training-sortie details in clients' panels (TRG progress, credit and proficiency are the host's)
-  - music cues the host's simulation triggers (for example after a friendly loss)
+  - sounds and banners raised from a delayed (coroutine) step of the host's simulation; most come
+    from per-frame updates and are forwarded
+  - TRG credit history (the host's scoring uses it; clients see the resulting score and messages)
 - **No background pause in co-op:** the game normally pauses when its window loses focus. In a
   co-op session it doesn't, so one player alt-tabbing doesn't pause everyone.
 - **Fixed host:** only the host can save or load, and the session ends if the host quits.

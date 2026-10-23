@@ -48,16 +48,29 @@ namespace AirDefenderCoop.Patches
         // Consequences of an identification that only the host may evaluate.
         [HarmonyPatch(typeof(IdentificationScoringEvaluator), nameof(IdentificationScoringEvaluator.Evaluate))]
         [HarmonyPrefix]
-        private static bool NoClientScoring(string contactId, ref string __result)
+        private static bool NoClientScoring(TrackRenderer track, string contactId, int serialId, string oldIdentifier, string newIdentifier,
+            bool triggerQraOnThreatIdent, ref string __result)
         {
             if (!ClientGate.Suppress) return true;
-            __result = contactId;
+            __result = IdentificationScoringEvaluator.ResolveCanonicalContactId(contactId, serialId, track);
+            // The QRA launch-options dialog a new threat identification opens is this player's.
+            if (triggerQraOnThreatIdent && IdentificationScoringEvaluator.IsNewThreatIdent(oldIdentifier, newIdentifier))
+            {
+                try { IdentificationScoringEvaluator.OpenQraLaunchOptionsFor(__result); }
+                catch (System.Exception e) { CoopLog.Warn("QRA options after identification: " + e.Message); }
+            }
             return false;
         }
 
         [HarmonyPatch(typeof(TrackManager), nameof(TrackManager.PropagateIdentifierAcrossWave))]
         [HarmonyPrefix]
         private static bool NoClientPropagation() => !ClientGate.Suppress;
+
+        // The client's radio channel list mirrors the host's (PanelMirrors); it must not drop
+        // channels on its own.
+        [HarmonyPatch(typeof(RadioChannelUI), nameof(RadioChannelUI.PruneStaleChannels))]
+        [HarmonyPrefix]
+        private static bool NoClientChannelPrune() => !ClientGate.Suppress;
 
         internal static void RegisterCommands()
         {
@@ -81,7 +94,8 @@ namespace AirDefenderCoop.Patches
             }
             try { ForcePendingTag.ClearPendingRequirement(contactId); } catch { }
             if (ident != "Z") { try { TrackManager.PropagateIdentifierAcrossWave(contactId, ident, color); } catch { } }
-            try { IdentificationScoringEvaluator.Evaluate(track, contactId, track != null ? track.GetTrackSerialId() : -1, old, ident, triggerQraOnThreatIdent: true); }
+            // No QRA dialog here: the identifying client opened its own (NoClientScoring).
+            try { IdentificationScoringEvaluator.Evaluate(track, contactId, track != null ? track.GetTrackSerialId() : -1, old, ident, triggerQraOnThreatIdent: false); }
             catch (System.Exception e) { CoopLog.Warn("identify scoring: " + e.Message); }
         }
 

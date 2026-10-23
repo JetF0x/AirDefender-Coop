@@ -45,7 +45,7 @@ if ($Logs) {
         frameMethods  = [int]$g[1].Value
         tickOwners    = [int]$g[2].Value
         scoringGuards = [int](Select-String $tmp -Pattern 'TOTAL guarded: (\d+)').Matches[0].Groups[1].Value
-        commandRoutes = (Select-String (Join-Path (Get-ModSrc) 'Commands\RouteList.cs') -Pattern 'MethodRouter\.Add\(').Count
+        commandRoutes = (Select-String (Join-Path (Get-ModSrc) 'Commands\RouteList.cs') -Pattern 'MethodRouter\.(Add|Reserve)\(').Count
         fingerprint   = (Select-String $tmp -Pattern '^fingerprint (\w+)').Matches[0].Groups[1].Value
     }
     $got = Get-LogCounts $main

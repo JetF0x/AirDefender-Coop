@@ -27,7 +27,7 @@ Recorded by `scripts/snapshot-game-baseline.ps1` in `_baseline/26140834/` (git-i
 | BepInEx / Doorstop / HarmonyX | 5.4.23.5 / 4.5.0 / 2.9.0 |
 | Steamworks.NET | 2025.162.1 (SDK 1.62, `steam_api64.dll` 09.60.44.10) |
 | Save schema | `CurrentNamedSaveSchemaVersion = 3`, `CurrentParkedAssetStateSchemaVersion = 1` |
-| Startup log counts | `SimulationGate: 68 frame methods gated, 9 tick owners`, `Scoring guards: 29`, `Command routes: 86` |
+| Startup log counts | `SimulationGate: 69 frame methods gated, 9 tick owners`, `Scoring guards: 29`, `Command routes: 86` (mod 0.2.2) |
 | Mod | v0.2.1, `Protocol.Version` 3 |
 | Decompile | `_decomp/AirDefender-26140834/` (ilspycmd 11.1), recorded in the baseline's `env.json`. **Keep it**: the next check diffs against it. `_decomp/AirDefender/` is the 25378621 decompile. |
 
@@ -162,7 +162,9 @@ rg -n "<name>" _decomp/AirDefender-<id>/AirDefender/<Type>.cs
 - A missing type logs `SimulationGate: type X not found` and that type keeps simulating on clients, which desyncs them.
 - A type that loses its `Update` produces **no log**; only the total count drops.
 
-**Expected count:** `SimulationGate: 68 frame methods gated, 9 tick owners`. The 67 types declare 68 frame methods, because `EnemyFighterEscortMover` declares both `Update` and `LateUpdate`, and `NimrodEwEmitter` declares only `LateUpdate`.
+**Expected count:** `SimulationGate: 69 frame methods gated, 9 tick owners`. The 68 types declare 69 frame methods, because `EnemyFighterEscortMover` declares both `Update` and `LateUpdate`, and `NimrodEwEmitter` and `NuclearDetonationWatcher` declare only `LateUpdate`.
+
+**Host simulation depth.** On the host the same prefix (with a finalizer, sharing `__state`) counts `SimulationGate.HostSimDepth` while a gated frame method or tick runs. `PresentationSync` forwards sounds and alert banners produced inside that window ([5.9](#59-tracks-radar-time-and-presentation)). Coroutines a gated method starts are not counted.
 
 **EntityLogicTypes (43):**
 - AircraftAltitudeManager, AirToAirMissileMover, AirToGroundMissileMover, AirwayFollowerMover
@@ -176,7 +178,7 @@ rg -n "<name>" _decomp/AirDefender-<id>/AirDefender/<Type>.cs
 - ForcePendingTag, MissionTargetController, NimrodEwEmitter, LandingAircraftMarker
 - ReindeerAttackController, SantaTrackDatalinkFeed
 
-**WorldSimTypes (24):**
+**WorldSimTypes (25):**
 - AirfieldArrivalSequencer, AirfieldDepartureSequencer, ArmageddonGameEndService, BloodhoundSamService
 - Bootstrapper, ChinookSupplyService, CriticalBallisticLaunchDirector, CriticalRaidOrchestrator
 - EnemyCampaignDirector, EnemyIntelligenceService, EnemyMissionScheduler, F3Spawner
@@ -184,6 +186,7 @@ rg -n "<name>" _decomp/AirDefender-<id>/AirDefender/<Type>.cs
 - IdoDayOneManager, IdoIfrTrafficSpawner, IdoVfrTrafficSpawner, RadarDeceptiveJammingInjector
 - RigHelicopterShuttleSpawner, ScenarioDirector, ScenarioRunner
 - TrgSortieController (added for 26140834: one per air combat training sortie; its `Update` steps the engagement)
+- NuclearDetonationWatcher (mod 0.2.2: a scene object whose `LateUpdate` destroys aircraft and adds casualties when an enemy reaches the map centre)
 
 **Not gated on purpose.** `RedArrowsDisplayService` (26140834) flies a timetabled display from the shared clock, so it runs on every peer and its jets are local authority ([5.7](#57-entity-spawns-replicationspawncatalogcs-entityreplicatorcs)). The other new `NOT gated` types in 26140834 only present: `AdTrainingAreaOverlayRenderer`, `GameplayMusicCues`, `IdentBatchConfirmUI`, `OtherChannelsBackgroundPlayer`, `TopRightMenuUI`.
 
@@ -213,7 +216,7 @@ None of these attribute patches specify argument types, so **a new overload of a
 | ReplicationPatches | `TimeControlsUI.SetTimeScale(float scale)` (private) :383 | prefix | `scale` |
 | ReplicationPatches | `TimeControlsUI.HandleFocusChanged(bool hasFocus, bool inEditor, bool inGame)` (internal, 26140834) | prefix: skip the background pause while co-op is on | `hasFocus` |
 | ReplicationPatches | `TrackManager.TrySetOperatorClassification(string contactId, string identifier, Color color)` → `ClassificationApplyResult` :2295 | prefix | `contactId, identifier, color, __result` |
-| ReplicationPatches | `IdentificationScoringEvaluator.Evaluate(TrackRenderer track, string contactId, int serialId, string oldIdentifier, string newIdentifier, bool triggerQraOnThreatIdent)` :9 | prefix | `contactId, __result`. The mod also calls it with the named argument `triggerQraOnThreatIdent:` |
+| ReplicationPatches | `IdentificationScoringEvaluator.Evaluate(TrackRenderer track, string contactId, int serialId, string oldIdentifier, string newIdentifier, bool triggerQraOnThreatIdent)` :9 | prefix | all six names and `__result`. On a client it opens the QRA dialog itself (`IsNewThreatIdent`, `OpenQraLaunchOptionsFor`, `ResolveCanonicalContactId`); the host's `HostIdentify` passes `triggerQraOnThreatIdent: false` |
 | ReplicationPatches | `TrackManager.PropagateIdentifierAcrossWave(string, string, Color)` :2341 | prefix | — |
 | LifecyclePatches | `GameResetService.IsProcessLifetimePlatformRoot(GameObject root)` (private static) :298 | postfix | `root, __result` |
 | LifecyclePatches | `GameResetService.ResetToMainMenu()` :43 | prefix | — |
@@ -229,7 +232,15 @@ None of these attribute patches specify argument types, so **a new overload of a
 | PresentationSync | `VoiceAudioQueue.EvaluateShouldPlay(VoiceAudioRequest request)` (private static) :486 | postfix | `request, __result` |
 | PresentationSync | `SfxServiceImpl.PlayAlertNonVoice(AudioClip clip, float baseVolume=1, Func<bool> shouldPlay=null)` (private) :985 | prefix | `clip, baseVolume` |
 | PresentationSync | `UnityEngine.Resources.Load(string, Type)` | postfix | `path, __result` |
+| PresentationSync | `SfxServiceImpl.PlayInternal(AudioClip clip, float volume)` and `PlayInternalNormalized(AudioClip clip, AudioCategory category, float baseVolume)` (private, explicit `Type[]`) | prefix | `clip, volume` / `clip, category, baseVolume` |
+| PresentationSync | `NuclearBlastEffect.Spawn(Vector3 worldPos, float radiusMiles, NuclearDamageBands? damageBands, float bloomMiles, float dissipateMpm)` (explicit `Type[]`) | postfix | all five names |
+| PresentationSync | `AlertOverlay.Show(string message, float seconds)` and `(…, Color color)`; `SessionBannerUI.ShowHudNotification` with the same two shapes (explicit `Type[]`) | prefix | `message, seconds, color` |
+| PresentationSync | `GameplayMusicCues.NotifyFriendlyShotDown()`, `NotifyEasPlayed(float easClipSeconds)` | postfix | `easClipSeconds` |
+| EndGameSync | `ArmageddonGameEndService.ShowEndGameUI(bool victory)` (private) | postfix | `victory` |
+| EndGameSync | `ArmageddonEndGameUI.DisplaySantaDefeat()`; private `ContinuePlaying()` (prefix + postfix), `ReturnToMenu()`, `TryAgain()`, `NavigateToTradeTraining()` | postfix / prefix | — |
+| ReplicationPatches | `RadioChannelUI.PruneStaleChannels()` (private) | prefix: skipped on clients | — |
 | SimulationGate | `TickManager.Register` (see [5.1](#51-simulationgate-puppetsimulationgatecs)) | prefix | `target, callback` |
+| SimulationGate | every gated frame method | prefix + finalizer | `__state` only |
 
 **Other compile-time uses in `ReplicationPatches`:**
 - `ClassificationApplyResult.Applied/Success/Message`
@@ -271,7 +282,8 @@ Not guarded on purpose: `SetScores`, `Reset*`, `Restore*`, `SetImplementation`. 
 
 | Id | Method | Parameters | B |
 |---|---|---|---|
-| 0–10 | `QRAQuickLaunchService.` LaunchForTrack, LaunchForContact, LaunchWithOptions, LaunchForContactAuto, IssueTaskToLaunchGroup, IssueRefuelToLaunchGroup, IssueRtbToLaunchGroup, CascadeSpeedModeToLaunchGroup, CancelPendingLaunch, WireMintedSortieForAirborneCapEngage, TryRestoreRecoveredPairForTasking | (single overloads) | 4,5,8,9,10 |
+| 0–1 | `QRAQuickLaunchService.` LaunchForTrack, LaunchForContact: **reserved** (`MethodRouter.Reserve`) since 0.2.2. They only open the QRA launch-options dialog, which must open on the clicking player's screen. | | |
+| 2–10 | `QRAQuickLaunchService.` LaunchWithOptions, LaunchForContactAuto, IssueTaskToLaunchGroup, IssueRefuelToLaunchGroup, IssueRtbToLaunchGroup, CascadeSpeedModeToLaunchGroup, CancelPendingLaunch, WireMintedSortieForAirborneCapEngage, TryRestoreRecoveredPairForTasking | (single overloads) | 4,5,8,9,10 |
 | 11–12 | `ManualQRACommander.` LaunchInterceptors, LaunchTankerCap | | 11 |
 | 13–16 | `QRACommander.` SetAutoQRAEnabled, LaunchTankerCap, MassScrambleAllBases, MassScrambleAllBasesAgainstTarget | | |
 | 17–22 | `Bootstrapper.` SpawnInterceptorAtBase, SpawnInterceptorAtBaseUnarmedOk, SpawnMilitaryAsset (forced blocking), TryRelocateStationedInterceptor, TryRelocateStationedInterceptorPair, TryRelocateSupportAsset | | all |
@@ -378,6 +390,7 @@ Global state is synced field by field (`StateReplicator` + `FieldCodec`). The `f
 | `QRACommander` | | static |
 | `SessionStatisticsService` | | static |
 | `RadarStation` | | static |
+| `TrgProficiencyStore` | completed TRG engagements (auto-property backing field) | static |
 | `Radar:<stationName>` | each entry of the private `RadarStation.registry`, keyed by `stationName` (names must be unique) | instance |
 
 **Allowlists** (only these fields are sent for these types; each name is a string):
@@ -388,9 +401,12 @@ Global state is synced field by field (`StateReplicator` + `FieldCodec`). The `f
 | `MapFeaturesRenderer` | `destroyedFeatureIds` |
 | `TrackManager` | `contactIdToSerial`, `nextSerialId`, `ewRevealedAircraftTypes`, `visuallyIdentifiedAircraftTypes`, `enemyInsideFirPenaltyApplied`, `raidWarnedThroughLadder`, `pendingUnknownByEw`, `pendingHostileByEw`, `pendingHostileByWeaponIntel`, `nextQraSuffixOctal` |
 
-**CustomGlobals.** Two entries, sent as JSON through `JsonUtility` whenever they change:
+**CustomGlobals.** Sent as JSON through `JsonUtility` whenever they change. Entries marked *re-applied* are also written again on the client every 2 s from the last value received, because local game code writes them too:
 - `VirtualDeltas` uses `Bootstrapper.ExportVirtualDeltas()`, `ClearVirtualDeltas()` and `ImportVirtualDeltas(list)`. `Bootstrapper.VirtualDeltaEntry` must stay `[Serializable]` with public fields `baseName, assetType, delta`.
 - `ChaffClouds` (26140834) copies the host's active slots of `ChaffCloudRegistry`: the private static `s_clouds` (`Cloud[64]`, fields `active`, `painted`, `origin`, `bornGameSeconds`) and the private `Retire(int)`. Clouds are released only by gated code (`QRADefensiveService`, `EnemyChaffService` via `AirToAirMissileMover`), but every radar paints them in `RadarPrimaryHistory.PaintChaffClouds`. Their drift uses `WindService`, which is fixed at 240° (nothing calls its setters), and the shared timeline.
+- `PendingQra` (0.2.2, re-applied, `PanelMirrors`) copies the private statics of `QRAQuickLaunchService` in place: `s_pendingOrProcessingTargets`, `s_targetsLaunched`, `s_cancelledTargets`, `s_pendingSorties` (`HashSet<string>`), `s_desiredLaunchCountByTarget`, `s_pendingSortieByTarget`, `s_launchSortieByInterceptorContact` (`Dictionary<string,…>`), and `s_pendingLaunchInfoByTarget` (struct `PendingLaunchInfo { launchAt, usesTimeline }`). An unscaled ETA is sent as the seconds remaining. Readers: `ActiveOperationsPanel` ("QRA Pending … T-m:ss"), `RadioChannelUI`, `IsLaunchPendingOrCommittedForTarget`.
+- `HerculesFlights` / `ChinookFlights` (0.2.2) send `ExportSaveState()` and replace the client's `Instance._activeFlights` contents. They don't use `ImportSaveState`: that also purges flight contacts and calls `Bootstrapper.RegisterDynamicHolding` each time. Readers: `GetActiveFlights`, `GetFlightStatusForUi`, `TryGetOriginBaseForContactId`.
+- `RadioChannels` (0.2.2, re-applied) mirrors `RadioChannelUI.instance`: `channels` (`RadioChannel` fields `channelNumber, sortieKey, displayLabel, leadCallsign, wingmanCallsign, leadContactId, wingContactId`), `channelBySortie`, `channelByContact`. Each player keeps their own `activeChannel` (`enabled` marks it). It uses private `EnsureExists`, `RemoveChannel`, `ActivateChannel` and `s_panelVisible`. This carries the TRG channel labels ("TRG <area>") and pending-sortie channels.
 
 ### 5.7 Entity spawns (`Replication/SpawnCatalog.cs`, `EntityReplicator.cs`)
 
@@ -427,9 +443,11 @@ The four marker strings must match the game's `GameSaveManager.IsEmbeddedParkedA
 | CapAnchor | one iteration of `GameSaveManager.RestoreCAPAnchors` | `CapNumberRegistry.ClaimFromSave(contactId, capNumber)` (26140834: keeps the host's "CAP n" label), then `GameSaveManager.EnsureCapAnchorExists(string, Vector3)` |
 
 **Clone path.**
-- The host sends each component's `AssemblyQualifiedName`. The client resolves it with `Type.GetType` and sets the id through a field named **`"contactId"`** (a string field, found by reflection).
+- The host sends each component's `AssemblyQualifiedName`. The client resolves it with `Type.GetType` and sets the id through a field named **`"contactId"`** or, failing that, the backing field **`<ContactId>k__BackingField`** of a `ContactId` auto-property (both strings, found by reflection).
 - Unknown types log `Clone <id>: unknown component`.
-- Today `RadarCircleMover` has no `contactId` field. That is why `ContactA (RadarCircleMover)` and the heli shuttles log `as a structural copy`.
+- `RadarCircleMover` keeps its id in a `ContactId` auto-property (default `"ContactA"`) and re-registers in `Configure`. Before 0.2.2 clones of it kept `ContactA`. It still logs `as a structural copy`, because no save record describes it.
+- **Registry ids (0.2.2).** The game's `ContactRegistry` (rewritten in 26140834) maps a contact by the id it had when it last called `Register` (private `_idByContact`). On a client, ids that arrive by field sync never re-register, so `TryGetContact(id)` fails and position updates are dropped. `EntityReplicator.RepairRegistryIds` re-registers such contacts once a second (counted as `idfix=` in `[DIGEST]` lines). It uses the private `_contactsList` and `_idByContact`.
+- **VFR flights (0.2.2).** A VFR flight is a contact only through its `OrbitMover`; `TakeoffTurnMover` is not an `IContact`. `RestoreVFRAircraft` rebuilds an airborne flight with `isInOrbit == false` as a fresh `VfrLocalSortieController` takeoff, which never becomes a contact on a puppet. The `Vfr` spawn sets `isInOrbit` (and a radius if there is none) to take the orbit branch. Field sync then sets the mover's real transit state.
 
 **EntityReplicator:**
 - `IsLocalAuthority` compares `GetType().Name` with the strings **`"SatelliteContact"`**, **`"SatelliteMover"`** and **`"RedArrowsJet"`** (26140834). If one is renamed, those contacts are both replicated and simulated locally.
@@ -461,7 +479,8 @@ The four marker strings must match the game's `GameSaveManager.IsEmbeddedParkedA
 | `TrackSync.cs` | `TrackManager.Instance`, `contactToTrack` (internal `Dictionary<string, ActiveTrack>`), `contactIdToSerial`, `nextSerialId`; `TrackManager.ActiveTrack.renderer/serialId/roleCode`; private `TrackRenderer` fields `identifier`, `color`, `callsign`, `spokenCallsign`; setters `SetIdentifierAndColor`, `SetTrackId`, `SetRole`, `SetCallsign`, `SetSpokenCallsign` |
 | `RadarHitSync.cs` | A ground hit is "`NotifyHit` called **synchronously inside `RadarPrimaryHistory.Update`**". Other callers (missiles, AWACS/L11, datalink, ballistic, Fr24, MIRV, jamming, Santa, Trident; see `callers`) are forwarded by the host. If ground sweeps move to another method or a coroutine, clients would drop their own sweep hits. |
 | `TimeSync.cs` | `GameTimeline.IsAvailable/GetTimelineSeconds/GetStartDateUtc/SetState`; private `TimeControlsUI.SetTimeScale`. Assumes `Time.fixedDeltaTime = 0.02 * scale` (a base step of 0.02 s). |
-| `PresentationSync.cs` | `AsmaMessage` fields `messageId, simUtc, source, header, body, category, severity, requiresAcknowledge, teletype, options, devOnly` (category and severity sent as bytes); `AsmaMessageCategory.Coaching` is excluded; `AsmaOption.label/hotkey/isDefault/onSelected`; `AsmaService.Post`; `AsmaService._impl as AsmaServiceImpl` and its private `messages`, with a button chosen **by index**; private nested `VoiceAudioQueue.VoiceAudioRequest.clip/volume/isNormalized`; `VoiceAudioQueue.QueueGlobalVoiceClip`; `SfxServiceImpl`. Only clips loaded with `Resources.Load(string, Type)` can be forwarded. |
+| `PresentationSync.cs` | `AsmaMessage` fields `messageId, simUtc, source, header, body, category, severity, requiresAcknowledge, teletype, options, devOnly` (category and severity sent as bytes); `AsmaMessageCategory.Coaching` is excluded; `AsmaOption.label/hotkey/isDefault/onSelected`; `AsmaService.Post`; `AsmaService._impl as AsmaServiceImpl` and its private `messages`, with a button chosen **by index**; private nested `VoiceAudioQueue.VoiceAudioRequest.clip/volume/isNormalized`; `VoiceAudioQueue.QueueGlobalVoiceClip`; `SfxServiceImpl`. Only clips loaded with `Resources.Load(string, Type)` can be forwarded.. Since 0.2.2 also: one-shot sounds through private `SfxServiceImpl.PlayInternal`/`PlayInternalNormalized` (clip path from `Resources.Load`, `AudioCategory` as a number), `AlertOverlay.Show` (private `instance.alerts`, `Alert.message`), `SessionBannerUI.ShowHudNotification`, `NuclearBlastEffect.Spawn` (its own sounds, `GlobalFlickerService` flicker and `AirwayFollowerMover.SetNuclearKeepOut`), `GameplayMusicCues.NotifyFriendlyShotDown`/`NotifyEasPlayed`. Sounds and banners are forwarded only when produced inside `SimulationGate.HostSimDepth` (to everyone) or while running a client's command (`CommandRouter.ExecutingRemote`, to that client). |
+| `EndGameSync.cs` (0.2.2) | Private `ArmageddonGameEndService.instance` and its fields `gameEnded`, `victoryAchieved`, `armageddonTriggered`, methods `CacheDestroyedFeatures()`, `ShowEndGameUI(bool)`; `ArmageddonEndGameUI.isVisible`, `currentState`, enum `EndState { None, Defeat, Victory, SantaDefeat }`, `Hide()`, `ContinuePlaying()`, static `DisplaySantaDefeat()`; `ArmageddonGameEndService.EnterEndlessMode()`; `SfxService.ResumeAllAudio/StopSoundtrack`. Message `MsgType.EndGame` (53) and command `EndContinue`. |
 | `UI/PartnerOverlay.cs` | `HookManager.GetAll()`, `TrackManager.GetTrackTransform`, `SfxService.PlaySelectTick/PlayMessageBeep`, `Camera.main` with the map on z = 0 |
 | `Diagnostics/WorldDigest.cs` | Compares: timeline seconds and timescale; contact positions (excluding satellites, tolerance 3 units); `TrackManager.ForEachActiveTrack`, `GetSerialForContact`, `GetIdentifierForContact`; tension, performance and public scores; remaining **F3** count per base (private `Bootstrapper.EnsureManifestEntriesCache`, `s_manifestEntriesByBase`, `GetRemainingCountForBaseAndType`). It does **not** compare fuel, weapons, casualties, campaign state or track role/callsign. |
 | `Diagnostics/AutoTest.cs` | Private `LoginScreenUI` members `instance`, `selectedRole`, `selectedAor`, `DoLogin`, `StartNewGame`, `startupSoundCompleted`; `PlayerProfileManager.Profiles/SelectProfile`; identifier strings `"P"`, `"A"`, `"U"`, `"F"`, contact prefix `"IFR"`, asset `"F3"` |
@@ -514,9 +533,9 @@ The app id `3985030` is hard-coded in `install.ps1` (`steam_appid.txt`), `packag
 **Expected startup lines:**
 ```
 Air Defender Co-op <ver> on Unity <unity>, game <fingerprint>
-SimulationGate: 68 frame methods gated, 9 tick owners     <- new expected value = refdump "SimulationGate TOTAL"
+SimulationGate: 69 frame methods gated, 9 tick owners     <- new expected value = refdump "SimulationGate TOTAL"
 Scoring guards: 29                                        <- refdump "TOTAL guarded"
-Command routes: 86                                        <- number of MethodRouter.Add lines; stays 86 even when routes fail
+Command routes: 86                                        <- number of MethodRouter.Add + Reserve lines; stays 86 even when routes fail
 ```
 
 There are **131 normal** HarmonyX warnings of the form `AccessTools.DeclaredMethod: Could not find method for type AirDefender.X and name LateUpdate|FixedUpdate`. They come from SimulationGate trying every frame method on every type.
@@ -565,6 +584,22 @@ These already exist on build 25378621. They are not caused by an update; they're
 ---
 
 ## 9. Update history
+
+### Mod 0.2.2 (`Protocol.Version` 4), same game build 26140834
+
+The six "not yet replicated" items, plus two fixes found while testing them:
+- **Effects:** nuclear blasts, sounds, alert banners and music cues from the host's simulation (`PresentationSync`, `SimulationGate.HostSimDepth`).
+- **End-of-game debrief:** `EndGameSync`.
+- **Panel mirrors** (`PanelMirrors` via `CustomGlobals`): pending QRA, Hercules and Chinook flights, radio channels. The training-sortie labels travel with the radio channels, and `TrgProficiencyStore` is a global target.
+- **Route ids 0–1 reserved:** `LaunchForTrack`/`LaunchForContact` only open the QRA dialog, so it now opens on the requesting player's screen instead of the host's.
+- **QRA dialog after a hostile identification:** it opens on the identifying client, and the host no longer opens it.
+- **`NuclearDetonationWatcher` gated:** 69 frame methods.
+- **VFR flights and registry ids:** VFR flights flying out to their orbit never appeared on clients, and `RadarCircleMover` contacts (VFR cross-country flights) stopped moving on clients because their ids never re-registered (see [5.7](#57-entity-spawns-replicationspawncatalogcs-entityreplicatorcs)). Both bugs predate this release; short quiet test sessions had no VFR traffic. A 3-client test with VFR traffic went from 29–34% to 96% digest matches.
+
+Gotchas found:
+- **`JsonUtility` and this mod's classes:** it serialised a `List<>` of this mod's own nested `[Serializable]` class as empty (with no error). Mirrors use parallel lists of primitives or of game types.
+- **QRA countdown in autotests:** the game's QRA launch sequence waits for player responses before it starts its countdown (the same happens in single player, see the `solo-qra` autotest). `host-events` therefore starts the countdown itself with `SetPendingLaunchEta`.
+
 
 ### 25378621 → 26140834 (mod 0.2.1, `Protocol.Version` 3)
 

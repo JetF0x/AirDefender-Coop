@@ -15,8 +15,10 @@ namespace AirDefenderCoop.Commands
         {
             var t = typeof(QRAQuickLaunchService);
             // --- QRA launches and tasking
-            MethodRouter.Add(h, t, nameof(QRAQuickLaunchService.LaunchForTrack));
-            MethodRouter.Add(h, t, nameof(QRAQuickLaunchService.LaunchForContact));
+            // LaunchForTrack/LaunchForContact only open the QRA launch-options dialog, which belongs on
+            // the clicking player's screen; the launch it ends in (LaunchWithOptions/Auto) is routed.
+            MethodRouter.Reserve(nameof(QRAQuickLaunchService.LaunchForTrack));
+            MethodRouter.Reserve(nameof(QRAQuickLaunchService.LaunchForContact));
             MethodRouter.Add(h, t, nameof(QRAQuickLaunchService.LaunchWithOptions));
             MethodRouter.Add(h, t, nameof(QRAQuickLaunchService.LaunchForContactAuto));
             MethodRouter.Add(h, t, nameof(QRAQuickLaunchService.IssueTaskToLaunchGroup));
