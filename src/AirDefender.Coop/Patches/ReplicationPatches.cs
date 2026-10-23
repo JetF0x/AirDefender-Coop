@@ -26,6 +26,13 @@ namespace AirDefenderCoop.Patches
             return !CommandRouter.Route("SetTimeScale", w => w.F32(scale));
         }
 
+        // The game pauses itself when its window loses focus. In co-op that would pause everyone
+        // whenever any player alt-tabs (a client's pause is routed to the host), so only the
+        // resume half runs while co-op is on.
+        [HarmonyPatch(typeof(TimeControlsUI), nameof(TimeControlsUI.HandleFocusChanged))]
+        [HarmonyPrefix]
+        private static bool NoFocusPauseInCoop(bool hasFocus) => hasFocus || CoopSession.Mode == CoopMode.Offline;
+
         // Operator identification from any UI (ID bar, radial menu, flight-plan popup, ASMA).
         // The host performs the full identification (classification, wave propagation, scoring);
         // the client's UI carries on as if it succeeded and the result arrives via track sync.
@@ -41,16 +48,29 @@ namespace AirDefenderCoop.Patches
         // Consequences of an identification that only the host may evaluate.
         [HarmonyPatch(typeof(IdentificationScoringEvaluator), nameof(IdentificationScoringEvaluator.Evaluate))]
         [HarmonyPrefix]
-        private static bool NoClientScoring(string contactId, ref string __result)
+        private static bool NoClientScoring(TrackRenderer track, string contactId, int serialId, string oldIdentifier, string newIdentifier,
+            bool triggerQraOnThreatIdent, ref string __result)
         {
             if (!ClientGate.Suppress) return true;
-            __result = contactId;
+            __result = IdentificationScoringEvaluator.ResolveCanonicalContactId(contactId, serialId, track);
+            // The QRA launch-options dialog a new threat identification opens is this player's.
+            if (triggerQraOnThreatIdent && IdentificationScoringEvaluator.IsNewThreatIdent(oldIdentifier, newIdentifier))
+            {
+                try { IdentificationScoringEvaluator.OpenQraLaunchOptionsFor(__result); }
+                catch (System.Exception e) { CoopLog.Warn("QRA options after identification: " + e.Message); }
+            }
             return false;
         }
 
         [HarmonyPatch(typeof(TrackManager), nameof(TrackManager.PropagateIdentifierAcrossWave))]
         [HarmonyPrefix]
         private static bool NoClientPropagation() => !ClientGate.Suppress;
+
+        // The client's radio channel list mirrors the host's (PanelMirrors); it must not drop
+        // channels on its own.
+        [HarmonyPatch(typeof(RadioChannelUI), nameof(RadioChannelUI.PruneStaleChannels))]
+        [HarmonyPrefix]
+        private static bool NoClientChannelPrune() => !ClientGate.Suppress;
 
         internal static void RegisterCommands()
         {
@@ -69,12 +89,13 @@ namespace AirDefenderCoop.Patches
             if (!res.Success)
             {
                 CoopLog.Info($"Partner identification of {contactId} as {ident} refused: {res.Message}");
-                AsmaService.PostSitrep("IDENT FAILED", $"{CoopSession.PartnerName}: {res.Message}", AsmaMessageSeverity.Advisory);
+                AsmaService.PostSitrep("IDENT FAILED", $"{CoopSession.SenderName}: {res.Message}", AsmaMessageSeverity.Advisory);
                 return;
             }
             try { ForcePendingTag.ClearPendingRequirement(contactId); } catch { }
             if (ident != "Z") { try { TrackManager.PropagateIdentifierAcrossWave(contactId, ident, color); } catch { } }
-            try { IdentificationScoringEvaluator.Evaluate(track, contactId, track != null ? track.GetTrackSerialId() : -1, old, ident, triggerQraOnThreatIdent: true); }
+            // No QRA dialog here: the identifying client opened its own (NoClientScoring).
+            try { IdentificationScoringEvaluator.Evaluate(track, contactId, track != null ? track.GetTrackSerialId() : -1, old, ident, triggerQraOnThreatIdent: false); }
             catch (System.Exception e) { CoopLog.Warn("identify scoring: " + e.Message); }
         }
 

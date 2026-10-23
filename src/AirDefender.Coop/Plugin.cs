@@ -17,7 +17,7 @@ namespace AirDefenderCoop
     {
         public const string Guid = "airdefender.coop";
         public const string Name = "Air Defender Co-op";
-        public const string Version = "0.1.0";
+        public const string Version = "0.2.2";
 
         public static Plugin Instance { get; private set; }
         internal static Harmony Harmony { get; private set; }
@@ -60,6 +60,7 @@ namespace AirDefenderCoop
             PresentationSync.Init();
             PartnerOverlay.Init();
             CustomGlobals.Init();
+            EndGameSync.Init();
             RadarHitSync.Init();
             ReplicationPatches.RegisterCommands();
             Application.runInBackground = true;
@@ -94,6 +95,7 @@ namespace AirDefenderCoop
                 {
                     EntityReplicator.ClientTick();
                     TrackSync.ClientTick();
+                    CustomGlobals.ClientTick();
                 }
                 PartnerOverlay.Tick();
                 AutoTest.Tick();

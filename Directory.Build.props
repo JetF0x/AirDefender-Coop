@@ -3,6 +3,8 @@
     <!-- Root of the game install the mod compiles against and installs into. -->
     <GameDir Condition="'$(GameDir)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..'))</GameDir>
     <ManagedDir>$(GameDir)\Air Defender_Data\Managed</ManagedDir>
-    <BepInExCore>$(GameDir)\BepInEx\core</BepInExCore>
+    <BepInExCore Condition="'$(BepInExCore)' == ''">$(GameDir)\BepInEx\core</BepInExCore>
+    <!-- Publicized compile-time copy of AirDefender.dll (tools/Publicizer via scripts/build.ps1). -->
+    <GameLib Condition="'$(GameLib)' == ''">$(MSBuildThisFileDirectory)lib\AirDefender.dll</GameLib>
   </PropertyGroup>
 </Project>

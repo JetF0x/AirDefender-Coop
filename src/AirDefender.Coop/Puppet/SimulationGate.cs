@@ -39,6 +39,7 @@ namespace AirDefenderCoop.Puppet
             "F3Spawner", "Failures.FailureManager", "Fr24LiveTrafficService", "HerculesSupplyService",
             "HistoricalLaunchScheduler", "IdoDayOneManager", "IdoIfrTrafficSpawner", "IdoVfrTrafficSpawner",
             "RadarDeceptiveJammingInjector", "RigHelicopterShuttleSpawner", "ScenarioDirector", "ScenarioRunner",
+            "TrgSortieController", "NuclearDetonationWatcher",
         };
 
         /// <summary>Owners of TickManager callbacks that simulate rather than present.</summary>
@@ -54,10 +55,26 @@ namespace AirDefenderCoop.Puppet
 
         public static int PatchedMethods { get; private set; }
 
+        /// <summary>
+        /// Host: greater than zero while a gated simulation method or tick runs. Presentation the
+        /// simulation produces in that window (sounds, alert banners) is forwarded to the clients,
+        /// whose own simulation never produces it.
+        /// </summary>
+        public static int HostSimDepth { get; private set; }
+
+        /// <summary>Autotests: run game code as if the host's simulation had called it.</summary>
+        internal static void RunAsSimulation(Action a)
+        {
+            HostSimDepth++;
+            try { a(); }
+            finally { HostSimDepth--; }
+        }
+
         public static void Apply(Harmony h)
         {
             Assembly game = typeof(TrackManager).Assembly;
             var prefix = new HarmonyMethod(typeof(SimulationGate), nameof(SkipOnClient));
+            var finalizer = new HarmonyMethod(typeof(SimulationGate), nameof(LeaveSim));
             foreach (var name in Concat(EntityLogicTypes, WorldSimTypes))
             {
                 Type t = game.GetType("AirDefender." + name);
@@ -66,7 +83,7 @@ namespace AirDefenderCoop.Puppet
                 {
                     var mi = AccessTools.DeclaredMethod(t, m, Type.EmptyTypes);
                     if (mi == null) continue;
-                    h.Patch(mi, prefix: prefix);
+                    h.Patch(mi, prefix: prefix, finalizer: finalizer);
                     PatchedMethods++;
                 }
             }
@@ -87,13 +104,30 @@ namespace AirDefenderCoop.Puppet
             foreach (var x in b) yield return x;
         }
 
-        private static bool SkipOnClient() => !ClientGate.Suppress;
+        private static bool SkipOnClient(out bool __state)
+        {
+            __state = !ClientGate.Suppress;
+            if (__state) HostSimDepth++;
+            return __state;
+        }
+
+        // Runs whether or not the original ran, and on exceptions.
+        private static void LeaveSim(bool __state)
+        {
+            if (__state && HostSimDepth > 0) HostSimDepth--;
+        }
 
         private static void WrapTick(MonoBehaviour target, ref Action callback)
         {
             if (target == null || callback == null || !TickSim.Contains(target.GetType())) return;
             Action inner = callback;
-            callback = () => { if (!ClientGate.Suppress) inner(); };
+            callback = () =>
+            {
+                if (ClientGate.Suppress) return;
+                HostSimDepth++;
+                try { inner(); }
+                finally { HostSimDepth--; }
+            };
         }
     }
 }

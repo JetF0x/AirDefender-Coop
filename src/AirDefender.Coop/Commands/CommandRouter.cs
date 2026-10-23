@@ -50,7 +50,7 @@ namespace AirDefenderCoop.Commands
             string name = r.Str();
             if (!Handlers.TryGetValue(name, out var h))
             {
-                CoopLog.Warn($"Partner sent unknown command {name}");
+                CoopLog.Warn($"{CoopSession.SenderName} sent unknown command {name}");
                 return;
             }
             _remoteDepth++;
@@ -58,12 +58,12 @@ namespace AirDefenderCoop.Commands
             {
                 h(r);
                 Executed++;
-                CoopLog.Info($"Executed partner command {name}");
+                CoopLog.Info($"Executed {CoopSession.SenderName}'s command {name}");
             }
             catch (Exception e)
             {
                 Failed++;
-                CoopLog.Error($"Partner command {name} failed: {e}");
+                CoopLog.Error($"{CoopSession.SenderName}'s command {name} failed: {e}");
             }
             finally { _remoteDepth--; }
         }

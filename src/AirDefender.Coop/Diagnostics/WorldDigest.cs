@@ -40,7 +40,7 @@ namespace AirDefenderCoop.Diagnostics
             float window = _lastStatsTime > 0 ? now - _lastStatsTime : Interval;
             CoopLog.Info($"[STATS] contacts={EntityReplicator.HostTracked} spawnsSent={EntityReplicator.SpawnsSent} fieldsSent={StateReplicator.FieldsSent} " +
                          $"stateCost={StateReplicator.HostMsPerSecond:0.0}ms/s up={(CoopSession.BytesSent - _lastBytes) / 1024f / window:0.0}KB/s " +
-                         $"rtt={CoopSession.RttMs:0}ms cmds={Commands.CommandRouter.Executed}/{Commands.CommandRouter.Failed} asma={PresentationSync.AsmaForwarded} voice={PresentationSync.VoiceForwarded} hits={RadarHitSync.Forwarded}");
+                         $"players={CoopSession.Players.Count} inWorld={Bootstrap.WorldSync.ReadyPeerCount} rttMax={CoopSession.RttMs:0}ms cmds={Commands.CommandRouter.Executed}/{Commands.CommandRouter.Failed} asma={PresentationSync.AsmaForwarded} voice={PresentationSync.VoiceForwarded} hits={RadarHitSync.Forwarded}");
             _lastBytes = CoopSession.BytesSent;
             _lastStatsTime = now;
             _next = now + Interval;
@@ -119,6 +119,30 @@ namespace AirDefenderCoop.Diagnostics
             return l;
         }
 
+        // Contacts already described when they first drifted out of tolerance (logged once each).
+        private static readonly HashSet<string> ExplainedFar = new HashSet<string>(StringComparer.Ordinal);
+
+        private static string DescribeContact(string id)
+        {
+            if (!ContactRegistry.TryGetContact(id, out var c) || !(c is MonoBehaviour mb) || mb == null)
+            {
+                // Listed but not found by id: show what the registry holds for it.
+                var listed = ContactRegistry._contactsList.Where(x => { try { return x != null && x.ContactId == id; } catch { return false; } }).ToList();
+                var parts = listed.Select(x =>
+                {
+                    var m = x as MonoBehaviour;
+                    string recorded = ContactRegistry._idByContact.TryGetValue(x, out var rid) ? rid : "-";
+                    return $"{x.GetType().Name} alive={(m != null)} recordedId={recorded} components=[{(m != null ? string.Join(",", m.GetComponents<Component>().Where(k => k != null).Select(k => k.GetType().Name)) : "")}]";
+                });
+                return $"{id} (not found by id; listed {listed.Count}x: {string.Join(" | ", parts)})";
+            }
+            var go = mb.gameObject;
+            var puppet = go.GetComponent<CoopPuppet>();
+            string age = puppet != null ? $"{Time.realtimeSinceStartup - puppet.LastUpdateRealtime:0.0}s ago" : "never";
+            int sameName = UnityEngine.Object.FindObjectsByType<Transform>(FindObjectsInactive.Include).Count(t => t != null && t.name == id);
+            return $"{id} [{string.Join(",", go.GetComponents<Component>().Where(x => x != null).Select(x => x.GetType().Name))}] contact={c.GetType().Name} active={go.activeInHierarchy} lastPush={age} objectsNamed={sameName}";
+        }
+
         private static void OnDigest(NetReader r)
         {
             double hostTimeline = r.F64();
@@ -167,7 +191,12 @@ namespace AirDefenderCoop.Diagnostics
             sb.Append($"[DIGEST] {(clean ? "OK" : "DIFF")} contacts host={host.Count} mine={mine.Count} missing={missing.Count} extra={extra.Count} ");
             sb.Append($"posErrMax={maxErr:0.0}({worst}) far={far} | tracks host={hostTracks.Count} mine={myTracks.Count} missing={trackMissing} extra={trackExtra} diff={trackDiff} ");
             sb.Append($"| scores {(scoresMatch ? "match" : "DIFFER host[" + string.Join(",", hostScores ?? new List<string>()) + "] mine[" + string.Join(",", myScores) + "]")} ");
-            sb.Append($"| clock {clockDiff:+0.00;-0.00}s scale host={hostScale} mine={Time.timeScale} | applied fields={StateReplicator.FieldsApplied} spawns={EntityReplicator.SpawnsApplied}/{EntityReplicator.SpawnFailures} rogue={EntityReplicator.RogueSpawns} hits={RadarHitSync.Applied} deduped={PresentationSync.Deduped}");
+            sb.Append($"| clock {clockDiff:+0.00;-0.00}s scale host={hostScale} mine={Time.timeScale} | applied fields={StateReplicator.FieldsApplied} spawns={EntityReplicator.SpawnsApplied}/{EntityReplicator.SpawnFailures} rogue={EntityReplicator.RogueSpawns} idfix={EntityReplicator.IdRepairs} hits={RadarHitSync.Applied} deduped={PresentationSync.Deduped}");
+            foreach (var kv in host)
+            {
+                if (!mine.TryGetValue(kv.Key, out var p) || Vector2.Distance(p, kv.Value) <= PosTolerance || !ExplainedFar.Add(kv.Key)) continue;
+                sb.Append("\n   far: ").Append(DescribeContact(kv.Key)).Append($" host at {kv.Value} mine at {p}");
+            }
             if (missing.Count > 0) sb.Append("\n   missing: " + string.Join(", ", missing.Take(10)));
             if (extra.Count > 0) sb.Append("\n   extra: " + string.Join(", ", extra.Take(10)));
             if (diffs.Count > 0) sb.Append("\n   track diffs: " + string.Join("; ", diffs));

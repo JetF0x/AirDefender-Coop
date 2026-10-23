@@ -83,6 +83,7 @@ namespace AirDefenderCoop.Replication
             Static(typeof(QRACommander));
             Static(typeof(SessionStatisticsService));
             Static(typeof(RadarStation));
+            Static(typeof(TrgProficiencyStore));   // completed TRG engagements (proficiency in scoring texts)
             return l;
         }
 

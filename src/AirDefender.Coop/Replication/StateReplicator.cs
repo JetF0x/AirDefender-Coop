@@ -62,7 +62,9 @@ namespace AirDefenderCoop.Replication
 
             CoopSession.Register(MsgType.EntityFields, OnEntityFields);
             CoopSession.Register(MsgType.GlobalState, OnGlobalState);
-            Bootstrap.WorldSync.PartnerContactsReported += _ => { Entities.Clear(); Globals.Clear(); _primed = true; };
+            // Someone (re)joined the world: resend everything once. Values the others already hold are
+            // simply rewritten.
+            Bootstrap.WorldSync.PartnerContactsReported += (_, __) => { Entities.Clear(); Globals.Clear(); _primed = true; };
             Bootstrap.WorldSync.HostWorldSent += () => _primed = false;
             CoopSession.PartnerLeft += _ => { Entities.Clear(); Globals.Clear(); _primed = false; };
         }

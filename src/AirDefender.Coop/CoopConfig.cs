@@ -8,6 +8,7 @@ namespace AirDefenderCoop
     public static class CoopConfig
     {
         public static ConfigEntry<int> Port;
+        public static ConfigEntry<int> MaxPlayers;
         public static ConfigEntry<KeyCode> PanelKey;
         public static ConfigEntry<bool> Verbose;
         public static ConfigEntry<string> LastJoinAddress;
@@ -25,10 +26,14 @@ namespace AirDefenderCoop
         public static string CliAutoTest;      // scripted test name
         public static bool Sandbox;            // second local instance: never persist anything
         public static string CliProfile;       // callsign to auto-select (testing)
+        public static int CliMaxPlayers;       // overrides MaxPlayers for this run only (not saved)
 
         public static void Bind(ConfigFile cfg)
         {
             Port = cfg.Bind("Network", "Port", 27515, "TCP port used for direct-IP / local co-op.");
+            MaxPlayers = cfg.Bind("Network", "MaxPlayers", 4,
+                new ConfigDescription("Players in a hosted session, including the host. Each extra player adds host upload.",
+                    new AcceptableValueRange<int>(2, 16)));
             LastJoinAddress = cfg.Bind("Network", "LastJoinAddress", "127.0.0.1", "Last address typed into the Join box.");
             PanelKey = cfg.Bind("UI", "PanelKey", KeyCode.F9, "Key that toggles the co-op panel.");
             Verbose = cfg.Bind("Diagnostics", "VerboseLog", false, "Write high-volume replication diagnostics to the coop log.");
@@ -60,6 +65,9 @@ namespace AirDefenderCoop
                         break;
                     case "--coop-sandbox":
                         Sandbox = true;
+                        break;
+                    case "--coop-max-players":
+                        if (nextIsValue && int.TryParse(next, out int mp)) { CliMaxPlayers = mp; i++; }
                         break;
                     case "--coop-profile":
                         if (nextIsValue) { CliProfile = next; i++; }

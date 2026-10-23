@@ -50,6 +50,13 @@ namespace AirDefenderCoop.Commands
             CoopSession.Register(MsgType.CommandResult, OnResult);
         }
 
+        /// <summary>Keeps a route id that is no longer routed, so the ids after it stay the same.</summary>
+        public static void Reserve(string name)
+        {
+            Routes.Add(null);
+            CoopLog.Debug($"Route {Routes.Count - 1} reserved ({name} runs locally)");
+        }
+
         /// <summary>Registers and patches one game method. Order of registration must match on both peers.</summary>
         public static void Add(Harmony h, Type type, string method, Type[] args = null, bool? blocking = null)
         {
@@ -233,7 +240,7 @@ namespace AirDefenderCoop.Commands
 
             if (err != null)
             {
-                CoopLog.Warn($"Partner call {route.Name} rejected: {err}");
+                CoopLog.Warn($"{CoopSession.SenderName}'s call {route.Name} rejected: {err}");
                 if (route.Blocking) Reply(req, false, err, null);
                 return;
             }
@@ -243,7 +250,7 @@ namespace AirDefenderCoop.Commands
             {
                 CommandRouter.EnterRemote();
                 ret = route.Method.Invoke(inst, args);
-                CoopLog.Info($"Executed partner call {route.Name}");
+                CoopLog.Info($"Executed {CoopSession.SenderName}'s call {route.Name}");
             }
             catch (TargetInvocationException tie)
             {
@@ -257,7 +264,15 @@ namespace AirDefenderCoop.Commands
 
             // Anything the call created must exist on the client before it reads the result.
             var created = new List<string>();
-            void Note(Type t, object v) { if (v != null && (ArgCodec.IsEntityType(t) || t == typeof(GameObject) || t == typeof(Transform))) { var cid = ArgCodec.ContactIdOf(v); if (cid != null) created.Add(cid); } }
+            void Note(Type t, object v)
+            {
+                if (v == null || !(ArgCodec.IsEntityType(t) || t == typeof(GameObject) || t == typeof(Transform))) return;
+                // Only contacts are replicated entities (not, say, the TrgSortieController a TRG call returns).
+                var go = v as GameObject ?? (v as Component)?.gameObject;
+                if (go == null || go.GetComponent<IContact>() == null) return;
+                var cid = ArgCodec.ContactIdOf(v);
+                if (cid != null) created.Add(cid);
+            }
             if (route.Method.ReturnType != typeof(void)) Note(route.Method.ReturnType, ret);
             for (int i = 0; i < route.Params.Length; i++)
                 if (route.Params[i].ParameterType.IsByRef) Note(route.Params[i].ParameterType.GetElementType(), args[i]);
@@ -274,7 +289,8 @@ namespace AirDefenderCoop.Commands
         private static void Reply(int req, bool ok, string err, Action<NetWriter> body)
         {
             if (req == 0) return;
-            CoopSession.Send(MsgType.CommandResult, w =>
+            // Only the player who made the call is waiting for this.
+            CoopSession.Reply(MsgType.CommandResult, w =>
             {
                 w.I32(req);
                 w.Bool(ok);
