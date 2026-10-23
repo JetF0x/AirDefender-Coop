@@ -15,6 +15,43 @@ namespace AirDefenderCoop.Replication
         [Serializable]
         private sealed class DeltaList { public List<Bootstrapper.VirtualDeltaEntry> items = new List<Bootstrapper.VirtualDeltaEntry>(); }
 
+        [Serializable]
+        private sealed class ChaffList { public List<int> index = new List<int>(); public List<Vector3> origin = new List<Vector3>(); public List<float> born = new List<float>(); }
+
+        // Chaff clouds are released by the host's (gated) interceptors and missiles. Each side's
+        // radar paints them from ChaffCloudRegistry, so the client mirrors the host's slots.
+        private static string CaptureChaff()
+        {
+            var l = new ChaffList();
+            var clouds = ChaffCloudRegistry.s_clouds;
+            for (int i = 0; i < clouds.Length; i++)
+            {
+                if (!clouds[i].active) continue;
+                l.index.Add(i);
+                l.origin.Add(clouds[i].origin);
+                l.born.Add(clouds[i].bornGameSeconds);
+            }
+            return JsonUtility.ToJson(l);
+        }
+
+        private static void ApplyChaff(string json)
+        {
+            var l = JsonUtility.FromJson<ChaffList>(json);
+            var clouds = ChaffCloudRegistry.s_clouds;
+            var keep = new bool[clouds.Length];
+            for (int k = 0; k < l.index.Count; k++)
+            {
+                int i = l.index[k];
+                if (i < 0 || i >= clouds.Length) continue;
+                keep[i] = true;
+                if (clouds[i].active && clouds[i].origin == l.origin[k] && clouds[i].bornGameSeconds == l.born[k]) continue;
+                if (clouds[i].active) ChaffCloudRegistry.Retire(i);
+                clouds[i] = new ChaffCloudRegistry.Cloud { active = true, origin = l.origin[k], bornGameSeconds = l.born[k] };
+            }
+            for (int i = 0; i < clouds.Length; i++)
+                if (!keep[i] && clouds[i].active) ChaffCloudRegistry.Retire(i);
+        }
+
         private sealed class Entry
         {
             public string Key;
@@ -37,6 +74,7 @@ namespace AirDefenderCoop.Replication
                     Bootstrapper.ImportVirtualDeltas(d.items);
                 },
             },
+            new Entry { Key = "ChaffClouds", Capture = CaptureChaff, Apply = ApplyChaff },
         };
 
         private static float _next;

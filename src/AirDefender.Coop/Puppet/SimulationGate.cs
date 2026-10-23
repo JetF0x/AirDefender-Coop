@@ -39,6 +39,7 @@ namespace AirDefenderCoop.Puppet
             "F3Spawner", "Failures.FailureManager", "Fr24LiveTrafficService", "HerculesSupplyService",
             "HistoricalLaunchScheduler", "IdoDayOneManager", "IdoIfrTrafficSpawner", "IdoVfrTrafficSpawner",
             "RadarDeceptiveJammingInjector", "RigHelicopterShuttleSpawner", "ScenarioDirector", "ScenarioRunner",
+            "TrgSortieController",
         };
 
         /// <summary>Owners of TickManager callbacks that simulate rather than present.</summary>

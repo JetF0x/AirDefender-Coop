@@ -116,6 +116,10 @@ namespace AirDefenderCoop.Commands
             MethodRouter.Add(h, tk, nameof(TankerTrackMover.ReturnToBase), new[] { typeof(Vector3), typeof(bool) });
             MethodRouter.Add(h, typeof(AircraftAltitudeManager), nameof(AircraftAltitudeManager.SetTargetAltitude));
 
+            // --- Air combat training (TRG) sorties
+            MethodRouter.Add(h, typeof(TrgSortieService), nameof(TrgSortieService.TryStart));
+            MethodRouter.Add(h, typeof(TrgSortieService), nameof(TrgSortieService.TryLaunchFromBase));
+
             CoopLog.Info($"Command routes: {MethodRouter.RouteCount}");
         }
     }

@@ -44,4 +44,8 @@ Key ideas that span several files:
 - The handshake rejects peers unless **both** `Protocol.Version` (`Net/Protocol.cs`) and `Plugin.Version` match exactly. It also checks the game build fingerprint.
 - Bump `Protocol.Version` whenever a message layout, `MsgType` value or `RouteList` order changes.
 - A release version lives in two places that must stay equal: `Plugin.Version` in `Plugin.cs` and `<Version>` in `AirDefender.Coop.csproj`. `package.ps1` names the zip from the latter.
-- `lib/`, `artifacts/`, `_decomp/`, `.deps/` (BepInEx zip used by packaging), `bin/` and `obj/` are git-ignored. No game files may be committed.
+- `lib/`, `artifacts/`, `_decomp/`, `.deps/` (BepInEx zip used by packaging), `_baseline/`, `_update/`, `bin/` and `obj/` are git-ignored. No game files may be committed.
+
+## Game updates
+
+Follow `UPDATE.md`. In short: `scripts/snapshot-game-baseline.ps1` records the working build in `_baseline/<buildid>/`. `scripts/check-game-update.ps1` compares a new build (by default the Steam install, `..\..\Air Defender`) with that baseline and writes `_update/<buildid>/REPORT.md`. The report lists compile errors and a `tools/RefDump` diff of every game reference, including the string-only ones. Run `check-game-update.ps1 -Logs` after a local test to compare the startup counts and look for failure markers. `UPDATE.md` also lists every game reference the mod relies on and how to find it again in a new decompile, so update it whenever you add one.

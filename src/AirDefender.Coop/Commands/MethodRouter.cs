@@ -257,7 +257,15 @@ namespace AirDefenderCoop.Commands
 
             // Anything the call created must exist on the client before it reads the result.
             var created = new List<string>();
-            void Note(Type t, object v) { if (v != null && (ArgCodec.IsEntityType(t) || t == typeof(GameObject) || t == typeof(Transform))) { var cid = ArgCodec.ContactIdOf(v); if (cid != null) created.Add(cid); } }
+            void Note(Type t, object v)
+            {
+                if (v == null || !(ArgCodec.IsEntityType(t) || t == typeof(GameObject) || t == typeof(Transform))) return;
+                // Only contacts are replicated entities (not, say, the TrgSortieController a TRG call returns).
+                var go = v as GameObject ?? (v as Component)?.gameObject;
+                if (go == null || go.GetComponent<IContact>() == null) return;
+                var cid = ArgCodec.ContactIdOf(v);
+                if (cid != null) created.Add(cid);
+            }
             if (route.Method.ReturnType != typeof(void)) Note(route.Method.ReturnType, ret);
             for (int i = 0; i < route.Params.Length; i++)
                 if (route.Params[i].ParameterType.IsByRef) Note(route.Params[i].ParameterType.GetElementType(), args[i]);

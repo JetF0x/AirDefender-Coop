@@ -26,6 +26,13 @@ namespace AirDefenderCoop.Patches
             return !CommandRouter.Route("SetTimeScale", w => w.F32(scale));
         }
 
+        // The game pauses itself when its window loses focus. In co-op that would pause everyone
+        // whenever any player alt-tabs (a client's pause is routed to the host), so only the
+        // resume half runs while co-op is on.
+        [HarmonyPatch(typeof(TimeControlsUI), nameof(TimeControlsUI.HandleFocusChanged))]
+        [HarmonyPrefix]
+        private static bool NoFocusPauseInCoop(bool hasFocus) => hasFocus || CoopSession.Mode == CoopMode.Offline;
+
         // Operator identification from any UI (ID bar, radial menu, flight-plan popup, ASMA).
         // The host performs the full identification (classification, wave propagation, scoring);
         // the client's UI carries on as if it succeeded and the result arrives via track sync.

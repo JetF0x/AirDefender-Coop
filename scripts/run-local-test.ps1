@@ -31,12 +31,26 @@ $clientArgs = @('--coop-join', '127.0.0.1', '--coop-sandbox') + $common
 if ($ClientScript) { $clientArgs += @('--coop-autotest', $ClientScript) }
 
 $exe = Join-Path $game 'Air Defender.exe'
+# Every instance rewrites BepInEx\config\BepInEx.cfg while the chainloader starts, and a second
+# instance that hits the file at the same moment fails to load BepInEx at all. Start the next
+# instance only once the previous one's plugin has loaded (its "Command routes" line).
+function Wait-PluginLoaded($p) {
+    $log = Join-Path $game "BepInEx\coop-$($p.Id).log"
+    $deadline = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $deadline -and -not $p.HasExited) {
+        if ((Test-Path $log) -and (Select-String $log -Pattern 'Command routes:' -Quiet)) { return }
+        Start-Sleep -Milliseconds 250
+    }
+    Write-Warning "pid $($p.Id): plugin did not report loading within 60 s (see BepInEx\LogOutput.log)"
+}
 $procs = @()
 $procs += Start-Process -FilePath $exe -WorkingDirectory $game -ArgumentList $hostArgs -PassThru
-Start-Sleep 3
+Wait-PluginLoaded $procs[0]
+Start-Sleep 1
 for ($i = 1; $i -le $Clients; $i++) {
     if ($i -gt 1) { Start-Sleep $JoinStagger }
     $procs += Start-Process -FilePath $exe -WorkingDirectory $game -ArgumentList $clientArgs -PassThru
+    if ($i -lt $Clients) { Wait-PluginLoaded $procs[-1] }
 }
 Write-Host "host pid $($procs[0].Id)  client pids $(($procs | Select-Object -Skip 1 | ForEach-Object Id) -join ', ')"
 

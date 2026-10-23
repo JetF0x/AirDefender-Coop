@@ -159,7 +159,9 @@ namespace AirDefenderCoop.Replication
                     GSM.RestoreActiveInterceptors(new List<GSM.ActiveInterceptorState> { JsonUtility.FromJson<GSM.ActiveInterceptorState>(json) });
                     return true;
                 case Kind.CapAnchor:
+                    // Mirrors GameSaveManager.RestoreCAPAnchors: keep the host's "CAP n" label.
                     var cap = JsonUtility.FromJson<GSM.CAPAnchorState>(json);
+                    CapNumberRegistry.ClaimFromSave(cap.contactId, cap.capNumber);
                     return GSM.EnsureCapAnchorExists(cap.contactId, cap.position);
                 case Kind.Missile:
                     return RestoreMissile(JsonUtility.FromJson<GSM.InFlightMissileState>(json));

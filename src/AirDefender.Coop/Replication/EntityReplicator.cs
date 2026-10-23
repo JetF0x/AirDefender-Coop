@@ -62,11 +62,15 @@ namespace AirDefenderCoop.Replication
             CoopSession.PartnerLeft += _ => { Known.Clear(); _hostPrimed = false; Sanctioned.Clear(); };
         }
 
-        /// <summary>Contacts each side simulates for itself (deterministic from the shared clock).</summary>
+        /// <summary>
+        /// Contacts each side simulates for itself (deterministic from the shared clock). The Red Arrows
+        /// fly a timetabled display; RedArrowsDisplayService runs on every peer and its NOTAMs are
+        /// de-duplicated by PresentationSync.
+        /// </summary>
         public static bool IsLocalAuthority(IContact c)
         {
             string n = c.GetType().Name;
-            return n == "SatelliteContact" || n == "SatelliteMover";
+            return n == "SatelliteContact" || n == "SatelliteMover" || n == "RedArrowsJet";
         }
 
         // ================================================================ host
